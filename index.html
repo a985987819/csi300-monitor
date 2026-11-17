@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>流通基金概览 · 宽基 - 沪深300指数基金</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2322cc88'/%3E%3C/svg%3E">
+<script>
+/* 防闪烁：在样式渲染前应用已保存的主题（默认浅色） */
+try {
+  var _st = JSON.parse(localStorage.getItem("hs300.settings.v1") || "{}");
+  if (_st.theme === "dark") document.documentElement.classList.add("dark");
+} catch (e) {}
+</script>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ═══════════ 顶部导航栏 ═══════════ -->
+<header class="topbar">
+  <div class="topbar-left">
+    <h1 class="brand">流通基金概览</h1>
+    <span class="dot" id="marketDot"></span>
+    <span class="market-info"><b id="marketStatus">休市</b> · 服务器时间 <span id="serverTime">--</span></span>
+  </div>
+  <nav class="topnav" id="topnav">
+    <button class="nav-pill active" data-tab="broad">宽基</button>
+    <button class="nav-pill" data-tab="bond">债基</button>
+    <button class="nav-pill" data-tab="fav">我的自选 <span class="badge" id="favBadge">0</span></button>
+    <button class="nav-pill" data-tab="settings">设置</button>
+  </nav>
+  <button class="theme-btn" id="btnTheme" title="切换浅色 / 深色主题">🌙</button>
+</header>
+
+<!-- ═══════════ 主体：宽基页 ═══════════ -->
+<main id="page-broad" class="page active">
+  <section class="filter-bar">
+    <label class="kw-label" for="kwInput">筛选</label>
+    <input id="kwInput" type="text" autocomplete="off" spellcheck="false"
+           placeholder="简称 / 代码 / 经理 / 管理人 / 拼音缩写">
+    <div class="meta-line">
+      <b class="meta-title" id="metaTitle">宽基 - 沪深300指数基金</b>
+      <span class="meta-dim">&nbsp;共 <span id="countTotal">-</span> 只 · 来源：天天基金网</span>
+      <span class="mode-chip" id="modeChip"><i class="chip-dot"></i><span id="modeText">检测数据源…</span></span>
+      <span class="info-tip" tabindex="0">ⓘ
+        <span class="info-bubble" id="infoBubble"></span>
+      </span>
+      <a class="clear-filter" id="clearFilter">× 清空筛选</a>
+      <span class="meta-filtered" id="filteredNote"></span>
+    </div>
+    <div class="export-group">
+      <button class="btn btn-ghost" id="btnPause" hidden>⏸ 暂停获取</button>
+      <button class="btn btn-ghost" id="btnRefresh" title="重新从公开接口拉取最新数据">⟳ 刷新数据</button>
+      <button class="btn btn-green" id="btnExportPage">⟋ 导出当前页</button>
+      <button class="btn btn-white" id="btnExportExcel">⭳ 导出 Excel</button>
+    </div>
+  </section>
+
+  <div class="tabs-row">
+    <nav class="idx-tabs" id="idxTabs"><!-- 指数子标签由 JS 生成 --></nav>
+    <span class="tabs-sep"></span>
+    <div class="co-pick" id="coPick">
+      <button type="button" class="co-pick-btn" id="coBtn">
+        <span class="co-dot cur"></span>公司：全部<span class="caret">▾</span>
+      </button>
+      <div class="co-pop" id="coPop" hidden>
+        <input id="coSearch" type="text" autocomplete="off" spellcheck="false"
+               placeholder="公司名 / 拼音首字母（如 hx、yfd）">
+        <div class="co-list" id="coList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols-bar">
+    <button type="button" class="cols-toggle" id="btnCols" title="选择表格显示的列">
+      ☰ 列设置 <span class="cols-count" id="colsCount"></span><span class="caret">▾</span>
+    </button>
+    <span class="cols-hint">表头 ? 可查看指标说明 · 漏斗可按列筛选</span>
+    <div class="cols-pop" id="colsPop" hidden>
+      <section class="col-checks" id="colChecks"><!-- 分组列勾选由 JS 生成 --></section>
+    </div>
+  </div>
+
+  <section class="table-wrap" id="tableWrap">
+    <div class="table-scroll" id="tableScroll">
+      <table class="fund-table" id="fundTable">
+        <thead id="thead"><!-- JS --></thead>
+        <tbody id="tbody"><!-- JS --></tbody>
+      </table>
+      <div class="empty-tip" id="emptyTip" hidden>无匹配基金</div>
+    </div>
+  </section>
+
+  <footer class="page-foot" id="pageFoot">数据来源：天天基金网（fund.eastmoney.com）公开数据 · 实时获取 · 仅用于个人研究筛选，不构成投资建议</footer>
+</main>
+
+<!-- ═══════════ 设置页 ═══════════ -->
+<main class="page" id="page-settings">
+  <div class="stub-card settings-card">
+    <h2>设置</h2>
+    <label class="setting-row"><input type="checkbox" id="optDark"> 深色模式（默认浅色）</label>
+    <label class="setting-row"><input type="checkbox" id="optDense"> 紧凑行高（表格行高 26px）</label>
+    <label class="setting-row"><input type="checkbox" id="optColor"> 涨跌着色（正红负绿，A股口径）</label>
+    <label class="setting-row"><input type="checkbox" id="optGood"> 指标优选高亮（绿色 = 达到市场通用优秀标准，如夏普≥1、回撤≤10%）</label>
+    <label class="setting-row"><input type="checkbox" id="optCache"> 使用本地缓存（1 个月同步期内直接读取，不重新请求）</label>
+    <p class="stub-dim">设置会自动保存到本地浏览器。数据通过 server.py 中继实时调用天天基金公开接口。</p>
+  </div>
+</main>
+
+<!-- ═══════════ 表头筛选弹窗 ═══════════ -->
+<div class="filter-pop" id="filterPop" hidden>
+  <div class="fp-head"><b id="fpTitle">筛选</b><span class="fp-close" id="fpClose">×</span></div>
+  <div class="fp-quick" id="fpQuick">
+    <button type="button" data-q="top10">前 10 项</button>
+    <button type="button" data-q="above">高于平均</button>
+    <button type="button" data-q="below">低于平均</button>
+  </div>
+  <div class="fp-stats" id="fpStats"></div>
+  <div class="fp-range" id="fpRange">
+    <label class="fp-op" id="fpMinOp">≥</label><input type="text" id="fpMin" step="any" inputmode="decimal">
+    <label class="fp-op" id="fpMaxOp">≤</label><input type="text" id="fpMax" step="any" inputmode="decimal">
+  </div>
+  <div class="fp-contains" id="fpContains">
+    <label class="fp-op">包含</label><input type="text" id="fpKw" placeholder="关键字模糊匹配">
+  </div>
+  <div class="fp-foot">
+    <button type="button" class="fp-clear" id="fpClear">清空条件</button>
+    <span class="fp-hit" id="fpHit"></span>
+  </div>
+</div>
+
+<!-- ═══════════ 表头指标说明卡 ═══════════ -->
+<div class="stat-pop" id="statPop" hidden></div>
+
+<!-- ═══════════ 对比工具条（选中基金后浮现） ═══════════ -->
+<div class="cmp-bar" id="cmpBar" hidden>
+  <span class="cmp-bar-text">对比 <b id="cmpCount">0</b>/4</span>
+  <span class="cmp-names" id="cmpNames"></span>
+  <button type="button" class="btn btn-green" id="cmpGo">开始对比</button>
+  <button type="button" class="btn btn-ghost" id="cmpClear">清空</button>
+</div>
+
+<!-- ═══════════ 基金对比弹窗 ═══════════ -->
+<div class="chart-veil" id="cmpVeil" hidden>
+  <div class="chart-modal" id="cmpModal">
+    <div class="cm-head"><b>基金对比</b><span class="cm-sub" id="cmpSub"></span><span class="cm-close" id="cmpClose">×</span></div>
+    <div class="cmp-table-wrap" id="cmpTable"></div>
+    <div class="cm-range" id="cmpRange">
+      <button type="button" data-days="365" class="on">近1年</button>
+      <button type="button" data-days="1095">近3年</button>
+      <button type="button" data-days="0">成立以来</button>
+    </div>
+    <div class="cm-svg" id="cmpSvg"></div>
+    <div class="cm-note">曲线颜色与表头色点对应；虚线为沪深300基准（当前页签有基准行时显示）。</div>
+  </div>
+</div>
+
+<!-- ═══════════ 业绩走势对比图 ═══════════ -->
+<div class="chart-veil" id="chartVeil" hidden>
+  <div class="chart-modal" id="chartModal">
+    <div class="cm-head">
+      <b id="cmTitle">业绩走势对比</b>
+      <span class="cm-sub" id="cmSub"></span>
+      <span class="cm-close" id="cmClose">×</span>
+    </div>
+    <div class="cm-stats" id="cmStats"></div>
+    <div class="cm-range" id="cmRange">
+      <button type="button" data-days="365" class="on">近1年</button>
+      <button type="button" data-days="1095">近3年</button>
+      <button type="button" data-days="0">成立以来</button>
+    </div>
+    <div class="cm-svg" id="cmSvg"></div>
+    <div class="cm-note">复权净值归一化为区间累计收益 %；虚线为对应基准指数（债基页签无基准对照）。</div>
+  </div>
+</div>
+
+<!-- ═══════════ 加载遮罩 ═══════════ -->
+<div class="load-overlay" id="loadOverlay" hidden>
+  <div class="load-card">
+    <div class="load-title"><span class="dot"></span> 实时数据加载中</div>
+    <div class="load-bar"><div class="load-fill" id="loadFill"></div></div>
+    <div class="load-stage" id="loadStage">正在准备…</div>
+    <div class="load-actions">
+      <button class="btn btn-ghost" id="loadSkip">先用离线数据查看</button>
+    </div>
+  </div>
+</div>
+
+<!-- 离线兜底数据（可选） -->
+<script src="data/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
