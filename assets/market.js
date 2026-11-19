@@ -260,7 +260,7 @@
   }
   function markFailBody(msg) {
     $("mktBody").innerHTML = '<section class="mkt-block"><div class="mkt-fail">' + msg + "</div></section>" +
-      '<section class="mkt-block"><div class="mkt-foot-hint">提示：数据由浏览器直连东方财富公开行情接口，接口限流（连接重置）通常数分钟内自行恢复，之后点「⟳ 刷新」即可。</div></section>';
+      '<section class="mkt-block"><div class="mkt-foot-hint">提示：数据由浏览器直连东方财富公开行情接口（push2 集群）。「接口连接被重置」为东财对该出口 IP 的临时限流，通常十几分钟至一小时自行恢复，期间基金页实时数据不受影响；恢复后点「⟳ 刷新」即可。</div></section>';
   }
 
   /* ─────────── 主流程 ─────────── */
@@ -314,8 +314,8 @@
         else listFail.push(i === 0 ? "行业" : "题材");
       });
       if (!lists.length) {
-        chipText("板块清单获取失败（接口限流，稍后重试）", false);
-        markFailBody("板块清单获取失败（接口连接被重置）。");
+        chipText("板块清单获取失败（行情接口限流，稍后重试）", false);
+        markFailBody("板块清单获取失败（行情接口连接被重置）。");
         throw new Error("board lists failed");
       }
       state.listFail = listFail.join("/");
