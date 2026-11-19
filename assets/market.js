@@ -21,6 +21,17 @@
     { key: "kc50", secid: "1.000688", tx: "sh000688", name: "科创50", tag: "科创50" },
   ];
 
+  // 观察个股（市场页底部【个股】部分）：资金流入动向 + 近20日对比
+  var STOCKS = [
+    { key: "sy", secid: "1.600031", tx: "sh600031", name: "三一重工" },
+    { key: "lg", secid: "0.000528", tx: "sz000528", name: "柳工" },
+    { key: "admai", secid: "0.000553", tx: "sz000553", name: "安道麦A" },
+    { key: "zynp", secid: "0.002448", tx: "sz002448", name: "中原内配" },
+    { key: "md", secid: "0.000333", tx: "sz000333", name: "美的集团" },
+  ];
+  var STOCK_KLINE_FIELDS2 = "f51,f53,f54,f55,f58,f59,f57";   // 日期,收盘,最高,最低,振幅,涨跌幅,成交额
+  var STOCK_LINE = ["#0d9488", "#D81B60", "#F9A825", "#5C6BC0", "#EF6C00"];
+
   var CLIST_FIELDS = "f12,f14,f3,f7,f6,f62,f66,f72,f184,f109,f160,f24,f25,f164,f165,f128,f140,f136,f124";
   var KLINE_FIELDS2 = "f51,f53,f54,f55,f58,f59";   // 日期,收盘,最高,最低,振幅,涨跌幅（已实测）
   var FFLOW_FIELDS2 = "f51,f52,f57";               // 日期,主力净流入额,主力净占比
@@ -326,6 +337,78 @@
     return (closes[baseIdx] / closes[i] - 1) * 100;
   }
 
+  /* ─────────── 观察个股（市场页底部【个股】部分） ─────────── */
+  // 个股日K（含成交额 f57；东财主源，空/失败→腾讯降级，降级序列无 amount/amp 由聚合层兜底）
+  function fetchStockKline(secid, tx) {
+    var path = "/api/qt/stock/kline/get?secid=" + secid +
+      "&fields1=f1,f2,f3&fields2=" + STOCK_KLINE_FIELDS2 + "&klt=101&fqt=1&beg=" + ymdShift(-50) + "&end=20500101";
+    return fetchJsonp(path, KLINE_HOSTS).then(function (d) {
+      var klines = d && d.data && d.data.klines || [];
+      var bars = [];
+      for (var i = 0; i < klines.length; i++) {
+        var p = klines[i].split(",");
+        bars.push({ date: p[0], close: parseFloat(p[1]), high: parseFloat(p[2]), low: parseFloat(p[3]),
+                    amp: parseFloat(p[4]), pct: parseFloat(p[5]), amount: parseFloat(p[6]) });
+      }
+      if (bars.length) return bars;
+      return fetchTxKline(tx);
+    }).catch(function () {
+      return fetchTxKline(tx);
+    });
+  }
+  // 个股聚合：价格窗口 + 资金流持续性与动向序列
+  function aggStock(state, key, kbars, fbars) {
+    var st = state.stocks[key];
+    if (!st || !kbars || !kbars.length) return;
+    var closes = [];
+    kbars.forEach(function (b) { closes.push(b.close); });
+    var bi = -1;
+    for (var i = kbars.length - 1; i >= 0; i--) { if (kbars[i].date === state.baseDate) { bi = i; break; } }
+    if (bi < 0) bi = kbars.length - 1;
+    st.close = closes[bi];
+    st.d0 = num(kbars[bi].pct);
+    if (st.d0 === null && bi > 0 && closes[bi - 1]) st.d0 = (closes[bi] / closes[bi - 1] - 1) * 100;
+    st.w5 = winPct(closes, bi, 5);
+    st.w20 = winPct(closes, bi, 20);
+    st.amountYi = (kbars[bi].amount && !isNaN(kbars[bi].amount)) ? kbars[bi].amount / 1e8 : null;
+    st.cmp = closes.slice(Math.max(0, bi - 20), bi + 1);
+    st.dates = [];
+    for (var d = Math.max(0, bi - 20); d <= bi; d++) st.dates.push(kbars[d].date);
+    st.ok = true;
+    if (!fbars || !fbars.length) return;
+    var fj = -1;
+    for (var j = fbars.length - 1; j >= 0; j--) { if (fbars[j].date === state.baseDate) { fj = j; break; } }
+    if (fj < 0) fj = fbars.length - 1;
+    st.baseMf = fbars[fj].mf;
+    st.baseMr = num(fbars[fj].mr);
+    // 连续同向天数（正=连续净流入，负=连续净流出）
+    var streak = 0;
+    for (var k = fj; k >= 0; k--) {
+      var v = fbars[k].mf;
+      if (v === null || isNaN(v)) break;
+      if (streak === 0) {
+        if (v > 0) streak = 1;
+        else if (v < 0) streak = -1;
+        else break;
+      } else if (streak > 0 && v > 0) streak++;
+      else if (streak < 0 && v < 0) streak--;
+      else break;
+    }
+    st.flowStreak = streak;
+    // 近20日每日主力净额序列（红绿柱）+ 5日/20日累计
+    var series = [], s5 = 0, s20 = 0, n5 = 0, n20 = 0;
+    for (var m = fj; m >= 0 && n20 < 20; m--, n20++) {
+      var v2 = fbars[m].mf;
+      var val = (v2 !== null && !isNaN(v2)) ? v2 : 0;
+      series.unshift(val);
+      if (n5 < 5) { s5 += val; n5++; }
+      s20 += val;
+    }
+    st.mfSeries = series;
+    st.mf5sum = s5;
+    st.mf20sum = s20;
+  }
+
   /* ─────────── 页面骨架 ─────────── */
   function skelBars(n) {
     var s = "";
@@ -353,7 +436,9 @@
       mktBlock("板块风险性价比", "与基金风险指标同口径：波动 / 回撤 / 收益波动比", '<div class="mkt-cards" id="mktRiskWrap">' + skelCard(1) + "</div>") +
       mktBlock("热点题材动态", "近20日 → 近5日 → 今日 的题材轮动（桑基图）",
         '<div class="mkt-sanki-wrap" id="mktSankeyWrap">' + skelCard(2) + "</div>" +
-        '<div class="mkt-cards" id="mktWindowWrap" style="margin-top:14px">' + skelCard(4) + "</div>");
+        '<div class="mkt-cards" id="mktWindowWrap" style="margin-top:14px">' + skelCard(4) + "</div>") +
+      mktBlock("个股动向", "观察池资金流入与近20日对比（基准日口径）",
+        '<div id="mktStocksWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>");
   }
   function markFailBody(msg) {
     $("mktBody").innerHTML = '<section class="mkt-block"><div class="mkt-fail">' + msg + "</div></section>" +
@@ -523,6 +608,24 @@
       });
     }).then(function () {
       if (stale()) throw new Error("aborted");
+      // 阶段5：观察个股（日K + 资金流日K，各股独立失败容忍）
+      chipText("获取观察个股…", true);
+      state.stocks = {};
+      STOCKS.forEach(function (sx, si) {
+        state.stocks[sx.key] = { sx: sx, name: sx.name, color: STOCK_LINE[si % STOCK_LINE.length] };
+      });
+      return Promise.all(STOCKS.map(function (sx) {
+        return Promise.all([
+          fetchStockKline(sx.secid, sx.tx).catch(function () { return []; }),
+          fetchFflow(sx.secid).catch(function () { return []; }),
+        ]).then(function (r) {
+          aggStock(state, sx.key, r[0], r[1]);
+        });
+      })).then(function () {
+        renderStocks(state);
+      });
+    }).then(function () {
+      if (stale()) throw new Error("aborted");
       finalize(state);
     }).catch(function (e) {
       if (stale() || (e && e.message === "aborted")) return;
@@ -679,6 +782,7 @@
       indexes: state.indexes, boards: state.boards,
       txAmounts: state.txAmounts || null, breadth: state.breadth || null,
       emotion: state.emotion || null, txKline: !!state.txKline,
+      stocks: state.stocks || null,
       klineOkN: list.filter(function (b) { return b.klineOk; }).length,
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
       failN: state.klineFail + state.flowFail,
@@ -704,6 +808,7 @@
     renderYtd(data);
     renderRisk(data);
     renderWindows(data);
+    renderStocks(data);
   }
 
   function sparkSvg(closes, w20) {
@@ -979,6 +1084,113 @@
       '<div class="mkt-card"><h4>近20日涨幅最大 <span class="mkt-dim">累计%</span></h4>' + mini(windowTop(data, "w20", 8, false), "w20") + "</div>" +
       '<div class="mkt-card"><h4>近20日跌幅最大 <span class="mkt-dim">累计%</span></h4>' + mini(windowTop(data, "w20", 8, true), "w20") + "</div>" +
       '<div class="mkt-foot-hint">窗口为截至基准日（' + esc(data.baseDate) + " 收盘）的交易日累计涨跌幅；行业板块全量计算，题材按各窗口榜单极值纳入候选池。窗口数据需板块日K，接口限流时显示为空，稍后刷新恢复。</div>";
+  }
+
+  /* ─────────── 个股动向（市场页底部【个股】部分） ─────────── */
+  function mfBarsSvg(series) {
+    if (!series || !series.length) return '<span class="mkt-dim-num">--</span>';
+    var W = 96, H = 24, mid = H / 2;
+    var max = 1;
+    for (var i = 0; i < series.length; i++) max = Math.max(max, Math.abs(series[i]));
+    var bw = W / series.length;
+    var html = '<svg width="' + W + '" height="' + H + '" style="vertical-align:middle" title="近20个交易日每日主力净流入（红=净流入，绿=净流出）">';
+    html += '<line x1="0" y1="' + mid + '" x2="' + W + '" y2="' + mid + '" stroke="var(--t-border)" stroke-width="1"/>';
+    for (var j = 0; j < series.length; j++) {
+      var v = series[j];
+      var h = Math.max(1, Math.abs(v) / max * (mid - 2));
+      var x = (j * bw + 0.5).toFixed(1), w = Math.max(1, bw - 1.2).toFixed(1);
+      if (v >= 0) html += '<rect x="' + x + '" y="' + (mid - h).toFixed(1) + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#e05a5a"/>';
+      else html += '<rect x="' + x + '" y="' + mid + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#1fa363"/>';
+    }
+    return html + "</svg>";
+  }
+
+  // 近20日累计涨跌多线对比图（各股归一化到窗口起点=0）
+  function stocksChartHtml(data) {
+    var series = [];
+    Object.keys(data.stocks).forEach(function (k) {
+      var st = data.stocks[k];
+      if (st.cmp && st.cmp.length >= 2 && st.ok) {
+        var pts = [];
+        for (var i = 0; i < st.cmp.length; i++) pts.push((st.cmp[i] / st.cmp[0] - 1) * 100);
+        series.push({ name: st.name, color: st.color, pts: pts, dates: st.dates });
+      }
+    });
+    if (!series.length) return '<div class="mkt-fail">走势对比需个股日K（接口限流中暂缺，稍后刷新恢复）。</div>';
+    var W = 980, H = 240, L = 46, R = 110, T = 12, B = 26;
+    var iw = W - L - R, ih = H - T - B;
+    var mn = Infinity, mx = -Infinity;
+    series.forEach(function (s2) {
+      s2.pts.forEach(function (v) { if (v < mn) mn = v; if (v > mx) mx = v; });
+    });
+    if (mn === Infinity) return '<div class="mkt-fail">暂无数据</div>';
+    var pad = (mx - mn) * 0.08 || 1;
+    mn -= pad; mx += pad;
+    var X = function (i) { return L + iw * i / (series[0].pts.length - 1); };
+    var Y = function (v) { return T + ih * (1 - (v - mn) / Math.max(1e-9, mx - mn)); };
+    var g = "";
+    var k;
+    for (k = 0; k <= 4; k++) {
+      var v = mn + (mx - mn) * k / 4;
+      var y = Y(v).toFixed(1);
+      g += '<line x1="' + L + '" y1="' + y + '" x2="' + (W - R) + '" y2="' + y + '" stroke="var(--grid)"/>' +
+        '<text x="' + (L - 6) + '" y="' + (+y + 4) + '" text-anchor="end" class="snk-pct">' + v.toFixed(0) + "%</text>";
+    }
+    if (mn < 0 && mx > 0) {
+      g += '<line x1="' + L + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(0).toFixed(1) +
+        '" stroke="var(--t-border)" stroke-dasharray="4 3"/>';
+    }
+    var dates = series[0].dates || [];
+    for (k = 0; k <= 4; k++) {
+      var di = Math.round((series[0].pts.length - 1) * k / 4);
+      g += '<text x="' + X(di).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" class="snk-pct">' +
+        esc((dates[di] || "").slice(5)) + "</text>";
+    }
+    series.forEach(function (s2) {
+      var d = "";
+      for (var i = 0; i < s2.pts.length; i++) d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(s2.pts[i]).toFixed(1);
+      g += '<path d="' + d + '" fill="none" stroke="' + s2.color + '" stroke-width="1.8"/>';
+      var ly = Y(s2.pts[s2.pts.length - 1]);
+      g += '<text x="' + (W - R + 8) + '" y="' + (+ly + 4).toFixed(1) + '" font-size="11" fill="' + s2.color + '">' +
+        esc(s2.name) + " " + fmtPct(s2.pts[s2.pts.length - 1], 1) + "</text>";
+    });
+    return '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto">' + g + "</svg>";
+  }
+
+  function renderStocks(data) {
+    var host = $("mktStocksWrap");
+    if (!host) return;
+    var rows = [];
+    Object.keys(data.stocks).forEach(function (k) { rows.push(data.stocks[k]); });
+    if (!rows.length) {
+      host.innerHTML = '<div class="mkt-fail">个股数据暂不可用（行情接口限流中，稍后刷新恢复）。</div>';
+      return;
+    }
+    var anyOk = rows.some(function (r) { return r.ok; });
+    if (!anyOk) {
+      host.innerHTML = '<div class="mkt-fail">个股数据暂不可用（行情接口限流中，稍后刷新恢复）。</div>';
+      return;
+    }
+    var cols = [
+      { label: "个股", left: true, get: function (r) {
+          var tip = r.amountYi ? ("成交额 " + r.amountYi.toFixed(1) + "亿") : "";
+          return '<span class="mkt-dot" style="background:' + (r.color || "#8a96b0") + '"></span>' +
+            '<span class="mkt-name-cell"' + (tip ? " title='" + esc(tip) + "'" : "") + ">" + esc(r.name) + "</span>";
+        } },
+      { label: "收盘", get: function (r) { return r.close === null || r.close === undefined ? "--" : '<span class="mkt-name-cell">' + r.close.toFixed(2) + "</span>"; } },
+      { label: "今日涨跌", get: function (r) { return '<span class="' + pctCls(r.d0) + '">' + fmtPct(r.d0) + "</span>"; } },
+      { label: "近5日", get: function (r) { return '<span class="' + pctCls(r.w5) + '">' + fmtPct(r.w5) + "</span>"; } },
+      { label: "近20日", get: function (r) { return '<span class="' + pctCls(r.w20) + '">' + fmtPct(r.w20) + "</span>"; } },
+      { label: "主力净额", get: function (r) { return '<span class="' + pctCls(r.baseMf) + '">' + fmtYi(r.baseMf) + "</span>"; } },
+      { label: "连续", get: function (r) { return streakText(r.flowStreak); } },
+      { label: "5日累计", get: function (r) { return '<span class="' + pctCls(r.mf5sum) + '">' + fmtYi(r.mf5sum, 1) + "</span>"; } },
+      { label: "20日累计", get: function (r) { return '<span class="' + pctCls(r.mf20sum) + '">' + fmtYi(r.mf20sum, 1) + "</span>"; } },
+      { label: "资金动向", get: function (r) { return mfBarsSvg(r.mfSeries); } },
+    ];
+    host.innerHTML =
+      rankTable(rows, cols) +
+      '<div class="mkt-chart">' + stocksChartHtml(data) + "</div>" +
+      '<div class="mkt-foot-hint">口径与板块一致：基准日收盘数据；"连续"= 连续净流入(+)/净流出(−)天数；红绿柱为近20个交易日每日主力净流入；折线为各股归一化累计涨跌（起点=0），默认观察池：三一重工 / 柳工 / 安道麦A / 中原内配 / 美的集团。</div>';
   }
 
   /* ─────────── 桑基图（纯SVG，近20日→近5日→今日） ─────────── */

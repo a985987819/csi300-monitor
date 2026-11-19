@@ -943,3 +943,8 @@ html.dark .mkt-tag-div { background: rgba(245, 158, 11, 0.22); color: #f2b85c; }
 .mkt-breadth-bar { display: inline-block; width: 54px; height: 8px; border-radius: 4px;
   background: rgba(15, 157, 88, 0.25); overflow: hidden; vertical-align: middle; }
 .mkt-breadth-bar > span { display: block; height: 100%; background: #e05a5a; }
+
+/* 市场页：个股动向 */
+.mkt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.mkt-chart { margin-top: 14px; border: 1px solid var(--t-border); border-radius: 10px; background: var(--t-bg); padding: 10px 12px 8px; }
+.mkt-chart svg { display: block; width: 100%; height: auto; }
