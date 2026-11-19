@@ -955,3 +955,40 @@ html.dark .mkt-tag-div { background: rgba(245, 158, 11, 0.22); color: #f2b85c; }
 .mkt-cloud-hd { font-size: 11px; font-weight: 600; font-family: inherit; }
 .mkt-cloud-lb { font-size: 11px; font-weight: 500; font-family: inherit; }
 .mkt-cloud-lb2 { font-size: 10.5px; font-family: inherit; }
+
+/* 市场页：温度晴雨表 / 资金流向条形图 / 内嵌变幅条 / 图例 */
+.mkt-emoline { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; margin-bottom: 12px; }
+.mkt-emoline .mkt-emo { margin-bottom: 0; flex: 1; min-width: 300px; }
+.mkt-gauge { min-width: 280px; flex: none; background: var(--t-head); border-radius: 8px; padding: 10px 16px 12px;
+  display: flex; flex-direction: column; justify-content: center; gap: 6px; cursor: help; }
+.mkt-gauge-scale { position: relative; height: 14px; border-radius: 7px; overflow: visible;
+  background: linear-gradient(90deg, #0c7a3e 0%, #57c48c 22%, #c9cfda 50%, #ec7d7d 78%, #a51c1c 100%); }
+.mkt-gauge-pin { position: absolute; top: -4px; width: 0; height: 0; transform: translateX(-7px);
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-top: 22px solid var(--text-strong); filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.mkt-gauge-zones { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); padding: 0 2px; }
+.mkt-gauge-num { display: flex; align-items: baseline; gap: 8px; }
+.mkt-gauge-num b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.mkt-gauge-num i { font-style: normal; font-size: 12px; font-weight: 700; color: #fff; border-radius: 4px; padding: 2px 8px; }
+.mkt-flowbars { display: flex; flex-direction: column; gap: 3px; }
+.fb-row { display: grid; grid-template-columns: 88px 1fr 108px; gap: 8px; align-items: center; }
+.fb-name { font-size: 12px; color: var(--t-name); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fb-name .mkt-tag-div { padding: 1px 4px; margin-right: 4px; font-size: 10px; }
+.fb-axis { position: relative; height: 13px; background: var(--t-border2); border-radius: 3px; }
+.fb-axis::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--t-border); }
+.fb-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; }
+.fb-bar.pos { left: 50%; background: linear-gradient(90deg, #ec7d7d, #d8434a); }
+.fb-bar.neg { right: 50%; background: linear-gradient(270deg, #57c48c, #1fa363); }
+.fb-val { font-size: 12px; text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fb-val .fb-streak { margin-left: 5px; font-size: 10.5px; font-weight: 600; opacity: 0.85; }
+.fb-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint);
+  padding-left: 96px; margin-top: 4px; }
+.mkt-ibar { display: inline-block; width: 52px; height: 8px; position: relative; vertical-align: middle;
+  margin-left: 8px; background: var(--t-border2); border-radius: 3px; overflow: hidden; }
+.mkt-ibar-fill { position: absolute; left: 0; top: 0; height: 100%; }
+.mkt-ibar-fill.up { background: #e05a5a; }
+.mkt-ibar-fill.down { background: #1fa363; }
+.mkt-legend { display: flex; gap: 14px; margin-bottom: 4px; font-size: 12px; color: var(--text-dim); }
+.mkt-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.mkt-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+html.dark .mkt-gauge-num b { color: var(--text-strong); }

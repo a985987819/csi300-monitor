@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  var LS_KEY = "hs300.mkt.v3";           // 按基准日缓存聚合结果
+  var LS_KEY = "hs300.mkt.v4";           // 按基准日缓存聚合结果
 
   var CLIST_HOSTS = ["push2.eastmoney.com", "33.push2.eastmoney.com", "99.push2.eastmoney.com"];
   var KLINE_HOSTS = ["push2his.eastmoney.com", "33.push2his.eastmoney.com"];
@@ -29,11 +29,11 @@
     { key: "zynp", secid: "0.002448", tx: "sz002448", name: "中原内配" },
     { key: "md", secid: "0.000333", tx: "sz000333", name: "美的集团" },
   ];
-  var STOCK_KLINE_FIELDS2 = "f51,f53,f54,f55,f58,f59,f57";   // 日期,收盘,最高,最低,振幅,涨跌幅,成交额
+  var STOCK_KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59";   // 标准规范全序（同 KLINE_FIELDS2）
   var STOCK_LINE = ["#0d9488", "#D81B60", "#F9A825", "#5C6BC0", "#EF6C00"];
 
   var CLIST_FIELDS = "f12,f14,f3,f7,f6,f62,f66,f72,f184,f109,f160,f24,f25,f164,f165,f128,f140,f136,f124";
-  var KLINE_FIELDS2 = "f51,f53,f54,f55,f58,f59";   // 日期,收盘,最高,最低,振幅,涨跌幅（已实测）
+  var KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59";   // 标准规范全序：日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅
   var FFLOW_FIELDS2 = "f51,f52,f57";               // 日期,主力净流入额,主力净占比
 
   var gen = 0;            // 加载代际（强制刷新时作废旧加载）
@@ -204,7 +204,7 @@
     return page().then(function () { return out; });
   }
 
-  // 日K → [{date, close, high, low, amp, pct}]
+  // 日K → [{date, open, close, high, low, amount, amp, pct}]（标准规范全序解析）
   function fetchKline(secid, beg) {
     var path = "/api/qt/stock/kline/get?secid=" + secid +
       "&fields1=f1,f2,f3&fields2=" + KLINE_FIELDS2 + "&klt=101&fqt=1&beg=" + beg + "&end=20500101";
@@ -213,8 +213,8 @@
       var bars = [];
       for (var i = 0; i < klines.length; i++) {
         var p = klines[i].split(",");
-        bars.push({ date: p[0], close: parseFloat(p[1]), high: parseFloat(p[2]), low: parseFloat(p[3]),
-                    amp: parseFloat(p[4]), pct: parseFloat(p[5]) });
+        bars.push({ date: p[0], open: parseFloat(p[1]), close: parseFloat(p[2]), high: parseFloat(p[3]), low: parseFloat(p[4]),
+                    amount: parseFloat(p[6]), amp: parseFloat(p[7]), pct: parseFloat(p[8]) });
       }
       return bars;
     });
@@ -278,7 +278,7 @@
         var days = node.day || node.qfqday || [];
         var bars = [];
         for (var i = 0; i < days.length; i++) {
-          bars.push({ date: days[i][0], close: parseFloat(days[i][2]), high: parseFloat(days[i][3]), low: parseFloat(days[i][4]) });
+          bars.push({ date: days[i][0], open: parseFloat(days[i][1]), close: parseFloat(days[i][2]), high: parseFloat(days[i][3]), low: parseFloat(days[i][4]) });
         }
         return bars;
       }).catch(function (e) { clearTimeout(to); throw e; });
@@ -552,8 +552,8 @@
       var bars = [];
       for (var i = 0; i < klines.length; i++) {
         var p = klines[i].split(",");
-        bars.push({ date: p[0], close: parseFloat(p[1]), high: parseFloat(p[2]), low: parseFloat(p[3]),
-                    amp: parseFloat(p[4]), pct: parseFloat(p[5]), amount: parseFloat(p[6]) });
+        bars.push({ date: p[0], open: parseFloat(p[1]), close: parseFloat(p[2]), high: parseFloat(p[3]), low: parseFloat(p[4]),
+                    amount: parseFloat(p[6]), amp: parseFloat(p[7]), pct: parseFloat(p[8]) });
       }
       if (bars.length) return bars;
       return fetchTxKline(tx);
@@ -760,6 +760,10 @@
           if (bi < 0) bi = bars.length - 1;
           var d0 = num(bars[bi].pct);
           if (d0 === null && bi > 0 && closes[bi - 1]) d0 = (closes[bi] / closes[bi - 1] - 1) * 100;   // 腾讯降级源无pct字段
+          var ohlc = [];
+          for (var oi = Math.max(0, bi - 19); oi <= bi; oi++) {
+            ohlc.push({ o: bars[oi].open, h: bars[oi].high, l: bars[oi].low, c: bars[oi].close });
+          }
           return {
             ix: r.ix,
             close: closes[bi],
@@ -767,6 +771,7 @@
             w5: winPct(closes, bi, 5),
             w20: winPct(closes, bi, 20),
             spark: closes.slice(Math.max(0, bi - 19), bi + 1),
+            ohlc: ohlc,
           };
         });
       } else {
@@ -1090,6 +1095,157 @@
       pts.join(" ") + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>';
   }
 
+  // 迷你K线（20根：开高低收，红涨绿跌）
+  function candleSvg(ohlc) {
+    if (!ohlc || ohlc.length < 3) return '<span class="mkt-dim-num">--</span>';
+    var mn = Infinity, mx = -Infinity;
+    ohlc.forEach(function (k) {
+      mn = Math.min(mn, k.l !== null && !isNaN(k.l) ? k.l : k.c);
+      mx = Math.max(mx, k.h !== null && !isNaN(k.h) ? k.h : k.c);
+    });
+    if (mn === Infinity) return '<span class="mkt-dim-num">--</span>';
+    var pad = (mx - mn) * 0.06 || 1;
+    mn -= pad; mx += pad;
+    var W = 132, H = 34, top = 2, bot = 2;
+    var ih = H - top - bot;
+    var Y = function (v) { return top + ih * (1 - (v - mn) / Math.max(1e-9, mx - mn)); };
+    var bw = W / ohlc.length;
+    var bodyW = Math.max(2, bw * 0.68);
+    var html = '<svg width="' + W + '" height="' + H + '" style="vertical-align:middle">';
+    for (var i = 0; i < ohlc.length; i++) {
+      var k = ohlc[i];
+      if (k.c === null || isNaN(k.c)) continue;
+      var up = k.o !== null && !isNaN(k.o) ? k.c >= k.o : (i > 0 && ohlc[i - 1].c !== null ? k.c >= ohlc[i - 1].c : true);
+      var col = up ? "#e05a5a" : "#1fa363";
+      var xc = (i * bw + bw / 2).toFixed(1);
+      var yH = Y(k.h !== null && !isNaN(k.h) ? k.h : k.c).toFixed(1);
+      var yL = Y(k.l !== null && !isNaN(k.l) ? k.l : k.c).toFixed(1);
+      html += '<line x1="' + xc + '" y1="' + yH + '" x2="' + xc + '" y2="' + yL + '" stroke="' + col + '" stroke-width="1"/>';
+      var yO = Y(k.o !== null && !isNaN(k.o) ? k.o : k.c).toFixed(1);
+      var yC = Y(k.c).toFixed(1);
+      var bt = Math.min(yO, yC), bb = Math.max(1, Math.abs(yC - yO));
+      html += '<rect x="' + (i * bw + (bw - bodyW) / 2).toFixed(1) + '" y="' + bt + '" width="' + bodyW.toFixed(1) + '" height="' + bb.toFixed(1) + '" fill="' + col + '"/>';
+    }
+    return html + "</svg>";
+  }
+
+  // 表格内嵌变动幅度条（长度∝|v|/max，红正绿负）
+  function inlineBar(v, maxAbs) {
+    if (v === null || v === undefined || isNaN(v) || !maxAbs || maxAbs <= 0) return "";
+    var w = Math.min(100, Math.abs(v) / maxAbs * 100);
+    return '<span class="mkt-ibar"><span class="mkt-ibar-fill ' + (v > 0 ? "up" : "down") + '" style="width:' + w.toFixed(0) + '%"></span></span>';
+  }
+
+  // 指数涨跌对比：分组柱状图（今日/近5日/近20日 × 各指数）
+  function idxGroupedBarsHtml(indexes) {
+    if (!indexes || !indexes.length) return "";
+    var wins = [
+      { key: "d0", label: "今日" },
+      { key: "w5", label: "近5日" },
+      { key: "w20", label: "近20日" },
+    ];
+    var W = 980, H = 190, L = 44, B = 30, T = 14, R = 10;
+    var iw = W - L - R, ih = H - T - B;
+    var mx = 0;
+    indexes.forEach(function (r) {
+      wins.forEach(function (wd) {
+        var v = r[wd.key];
+        if (v !== null && v !== undefined && !isNaN(v)) mx = Math.max(mx, Math.abs(v));
+      });
+    });
+    if (mx <= 0) return '<div class="mkt-fail">暂无指数涨跌数据</div>';
+    mx = mx * 1.15;
+    var Y = function (v) { return T + ih * (1 - (v + mx) / (2 * mx)); };
+    var groupW = iw / indexes.length;
+    var barW = Math.min(26, groupW / (wins.length + 2));
+    var g = "";
+    var k;
+    for (k = 0; k <= 4; k++) {
+      var v = -mx + 2 * mx * k / 4;
+      var y = Y(v).toFixed(1);
+      g += '<line x1="' + L + '" y1="' + y + '" x2="' + (W - R) + '" y2="' + y + '" stroke="var(--grid)"/>' +
+        '<text x="' + (L - 6) + '" y="' + (+y + 4) + '" text-anchor="end" class="snk-pct">' + v.toFixed(1) + "%</text>";
+    }
+    g += '<line x1="' + L + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(0).toFixed(1) + '" stroke="var(--t-border)"/>';
+    indexes.forEach(function (r, gi) {
+      var gx = L + gi * groupW;
+      wins.forEach(function (wd, wi) {
+        var v = r[wd.key];
+        if (v === null || v === undefined || isNaN(v)) return;
+        var bh = Math.max(1, Math.abs(v) / mx * (ih / 2));
+        var bx = gx + (groupW - wins.length * barW - (wins.length - 1) * 4) / 2 + wi * (barW + 4);
+        var col = v > 0 ? "#e05a5a" : "#1fa363";
+        var by = v > 0 ? Y(v) : Y(0);
+        g += '<rect x="' + bx.toFixed(1) + '" y="' + by.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + bh.toFixed(1) +
+          '" fill="' + col + '" rx="2"><title>' + esc(r.ix.name) + " " + wd.label + " " + esc(fmtPct(v)) + "</title></rect>";
+      });
+      g += '<text x="' + (gx + groupW / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle" class="snk-pct">' + esc(r.ix.name) + "</text>";
+    });
+    // 图例：每组三根柱依次为 今日/近5日/近20日，柱色=涨跌方向
+    var legend = '<span class="mkt-legend"><span class="mkt-legend-item">每组三柱依次为：今日 · 近5日 · 近20日（红涨绿跌）</span></span>';
+    return '<div class="mkt-chart">' + legend + '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block">' + g + "</svg>" +
+      '<div class="mkt-foot-hint">柱高=涨跌幅绝对值（变幅对比），红=上涨、绿=下跌；悬浮查看精确值。</div></div>';
+  }
+
+  // 温度晴雨表：四因子合成温度（0-100）+ 渐变标尺指针
+  function emotionGauge(emo, boardUpPct) {
+    var upPct = boardUpPct !== null && boardUpPct !== undefined ? boardUpPct : 50;
+    var zt = (emo && emo.zt !== null && emo.zt !== undefined) ? emo.zt : null;
+    var dt = (emo && emo.dt !== null && emo.dt !== undefined) ? emo.dt : null;
+    var zb = (emo && emo.zbRate !== null && emo.zbRate !== undefined) ? emo.zbRate : null;
+    var lbN = (emo && emo.lbN) ? emo.lbN : 0;
+    // 温度公式（权重与因子均在 title 中说明）：广度45% + 涨停相对强度25% + 封板质量15% + 连板活跃15%
+    var ztRatio = (zt !== null && dt !== null && (zt + dt) > 0) ? zt / (zt + dt) * 100 : 50;
+    var quality = zb !== null ? 100 - zb : 60;
+    var active = Math.min(20, lbN) / 20 * 100;
+    var temp = Math.round(upPct * 0.45 + ztRatio * 0.25 + quality * 0.15 + active * 0.15);
+    temp = Math.max(0, Math.min(100, temp));
+    var zone = temp < 20 ? "冰点" : temp < 40 ? "降温" : temp < 60 ? "中性" : temp < 80 ? "升温" : "过热";
+    var zoneColor = temp < 20 ? "#1fa363" : temp < 40 ? "#5cc08d" : temp < 60 ? "#8a96b0" : temp < 80 ? "#ec7d7d" : "#a51c1c";
+    var tip = "温度=板块上涨占比×45% + 涨停相对强度×25% + 封板质量(100-炸板率)×15% + 连板活跃×15%；" +
+      "当前因子：广度 " + upPct.toFixed(0) + "% · 涨停/跌停强度 " + ztRatio.toFixed(0) + "% · 封板质量 " + quality.toFixed(0) + " · 连板活跃 " + active.toFixed(0);
+    var html = '<div class="mkt-gauge" title="' + esc(tip) + '">' +
+      '<div class="mkt-gauge-scale">' +
+      '<span class="mkt-gauge-pin" style="left:' + temp + '%"></span>' +
+      "</div>" +
+      '<div class="mkt-gauge-zones"><span>冰点</span><span>降温</span><span>中性</span><span>升温</span><span>过热</span></div>' +
+      '<div class="mkt-gauge-num" style="color:' + zoneColor + '"><b>' + temp + "</b>" +
+      '<i style="background:' + zoneColor + '">' + esc(zone) + "</i></div>" +
+      "</div>";
+    return html;
+  }
+
+  // 主力资金双向发散条形图（净流入=右侧红条 / 净流出=左侧绿条；悬浮含净占比/连续/5日累计/背离）
+  function flowBarsHtml(withFlow) {
+    if (!withFlow || !withFlow.length) return '<div class="mkt-fail">暂无资金流数据</div>';
+    var rows = withFlow.slice();
+    rows.sort(function (a, b) { return (b.baseMf || 0) - (a.baseMf || 0); });
+    var maxAbs = 1;
+    rows.forEach(function (r) { maxAbs = Math.max(maxAbs, Math.abs(r.baseMf || 0)); });
+    var html = '<div class="mkt-flowbars">';
+    rows.forEach(function (r) {
+      var v = r.baseMf || 0;
+      var w = Math.abs(v) / maxAbs * 50;
+      var side = v >= 0 ? "pos" : "neg";
+      var tip = [];
+      if (r.baseMr !== null && r.baseMr !== undefined) tip.push("净占比 " + fmtPct(r.baseMr, 1));
+      if (r.mf5sum !== null && r.mf5sum !== undefined) tip.push("5日累计 " + fmtYi(r.mf5sum, 1));
+      if (r.flowStreak) tip.push("连续 " + (r.flowStreak > 0 ? r.flowStreak + "天流入" : -r.flowStreak + "天流出"));
+      if (r.basePct !== null && r.basePct !== undefined) tip.push("当日 " + fmtPct(r.basePct));
+      var diverge = ((r.basePct > 0 && v < 0) || (r.basePct < 0 && v > 0)) ? "【价量背离】" : "";
+      var streakTag = r.flowStreak ? '<span class="fb-streak ' + (r.flowStreak > 0 ? "mkt-num-up" : "mkt-num-down") + '">' +
+        (r.flowStreak > 0 ? "+" : "−") + Math.abs(r.flowStreak) + "天</span>" : "";
+      html += '<div class="fb-row">' +
+        '<span class="fb-name" title="' + esc(diverge + tip.join(" · ")) + '">' +
+        (diverge ? '<b class="mkt-tag-div">背</b>' : "") + esc(name.length > 7 ? name.slice(0, 7) : name) + "</span>" +
+        '<div class="fb-axis"><span class="fb-bar ' + side + '" style="width:' + w.toFixed(1) + '%"></span></div>' +
+        '<span class="fb-val ' + pctCls(v) + '">' + fmtYi(v, 2) + streakTag + "</span>" +
+        "</div>";
+    });
+    html += '<div class="fb-scale"><span>净流出 ←</span><span>→ 净流入</span></div></div>';
+    return html;
+  }
+
   function renderIndexes(data) {
     var host = $("mktIdxWrap");
     if (!host) return;
@@ -1098,7 +1254,7 @@
       return;
     }
     var html = '<table class="mkt-table"><thead><tr>' +
-      "<th>指数</th><th>收盘</th><th>今日</th><th>成交额</th><th>近5日</th><th>近20日</th><th>上涨家数占比</th><th style='text-align:center'>近20日走势</th></tr></thead><tbody>";
+      "<th>指数</th><th>收盘</th><th>今日</th><th>成交额</th><th>近5日</th><th>近20日</th><th>上涨家数占比</th><th style='text-align:center'>近20日K线</th></tr></thead><tbody>";
     data.indexes.forEach(function (r) {
       var amt = data.txAmounts && data.txAmounts[r.ix.tx] && data.txAmounts[r.ix.tx].amtYi;
       var bd = null;
@@ -1118,10 +1274,11 @@
         "<td class='" + pctCls(r.w5) + "'>" + fmtPct(r.w5) + "</td>" +
         "<td class='" + pctCls(r.w20) + "'>" + fmtPct(r.w20) + "</td>" +
         "<td style='text-align:center'>" + breadthHtml + "</td>" +
-        "<td style='text-align:center'>" + sparkSvg(r.spark, r.w20) + "</td></tr>";
+        "<td style='text-align:center'>" + candleSvg(r.ohlc) + "</td></tr>";
     });
     html += "</tbody></table>" +
-      '<div class="mkt-foot-hint">上涨家数占比为该市场全部个股中上涨占比（广度）：≥50% 偏普涨，明显低于 50% 的指数上涨多为权重拉动；成交额来自腾讯快照。</div>';
+      '<div class="mkt-foot-hint">上涨家数占比为该市场全部个股中上涨占比（广度）：≥50% 偏普涨，明显低于 50% 的指数上涨多为权重拉动；成交额来自腾讯快照；K线为基准日前20个交易日（红涨绿跌）。</div>' +
+      idxGroupedBarsHtml(data.indexes);
     host.innerHTML = html;
   }
 
@@ -1207,9 +1364,6 @@
         : '<div class="mkt-foot-hint">部分涨跌/振幅为盘中实时值（板块日K接口限流中，收盘后自动转为收盘口径）。</div>';
     }
     withFlow.sort(function (a, b) { return (b.baseMf || 0) - (a.baseMf || 0); });
-    var inflow = withFlow.slice(0, 10);
-    var tail = withFlow.slice(-10).reverse();
-    var outflow = tail.filter(function (b) { return (b.baseMf || 0) < 0; });
     var amp = list.filter(function (b) { return b.baseAmp !== null && b.baseAmp !== undefined; })
       .sort(function (a, b) { return b.baseAmp - a.baseAmp; }).slice(0, 10);
 
@@ -1222,13 +1376,6 @@
       boardUpPct = upN / indList.length * 100;
     }
 
-    var flowCols = [
-      { label: "板块 / 题材", left: true, get: function (r) { return nameCell(r) + divergeTag(r); } },
-      { label: "主力净流入", get: function (r) { return '<span class="' + pctCls(r.baseMf) + '">' + fmtYi(r.baseMf) + "</span>"; } },
-      { label: "5日累计", get: function (r) { return '<span class="' + pctCls(r.mf5sum) + '">' + fmtYi(r.mf5sum, 1) + "</span>"; } },
-      { label: "连续", get: function (r) { return streakText(r.flowStreak); } },
-      { label: "涨跌幅", get: function (r) { return '<span class="' + pctCls(r.basePct) + '">' + fmtPct(r.basePct) + "</span>"; } },
-    ];
     var ampCols = [
       { label: "板块 / 题材", left: true, get: nameCell },
       { label: "振幅", get: function (r) { return '<span class="mkt-name-cell">' + fmtPct(r.baseAmp, 2) + "</span>"; } },
@@ -1241,12 +1388,10 @@
       { label: "主力净流入", get: function (r) { return '<span class="' + pctCls(r.baseMf) + '">' + fmtYi(r.baseMf) + "</span>"; } },
     ];
     host.innerHTML =
-      emotionStrip(data.emotion, boardUpPct) +
+      '<div class="mkt-emoline">' + emotionGauge(data.emotion, boardUpPct) + emotionStrip(data.emotion, boardUpPct) + "</div>" +
       '<div class="mkt-cards">' +
-      '<div class="mkt-card"><h4>主力净流入 TOP10 <span class="mkt-dim">亿元 · 5日累计 · 连续天数</span></h4>' +
-      (inflow.length ? rankTable(inflow, flowCols) : '<div class="mkt-fail">暂无资金流数据</div>') + "</div>" +
-      '<div class="mkt-card"><h4>主力净流出 TOP10 <span class="mkt-dim">亿元</span></h4>' +
-      (outflow.length ? rankTable(outflow, flowCols) : '<div class="mkt-fail">暂无资金流数据</div>') + "</div>" +
+      '<div class="mkt-card"><h4>主力资金流向 <span class="mkt-dim">基准日净额 · 红入绿出 · TOP20 · 悬浮看净占比/连续/5日累计/背离</span></h4>' +
+      flowBarsHtml(withFlow) + "</div>" +
       '<div class="mkt-card"><h4>振幅最大 TOP10 <span class="mkt-dim">板块与题材 · 含收盘位置</span></h4>' +
       (amp.length ? rankTable(amp, ampCols) : '<div class="mkt-fail">暂无振幅数据</div>') + "</div>" +
       "</div>" + flowNote + pctNote;
@@ -1263,10 +1408,12 @@
       if (b.ytd !== null) list.push(b);
     });
     list.sort(function (a, b) { return b.ytd - a.ytd; });
+    var ytdMax = 1;
+    list.forEach(function (b) { ytdMax = Math.max(ytdMax, Math.abs(b.ytd || 0)); });
     var up = list.slice(0, 10), down = list.slice(-10).reverse();
     var cols = [
       { label: "板块 / 题材", left: true, get: nameCell },
-      { label: "今年来", get: function (r) { return '<span class="' + pctCls(r.ytd) + '">' + fmtPct(r.ytd) + "</span>"; } },
+      { label: "今年来", get: function (r) { return '<span class="' + pctCls(r.ytd) + '">' + fmtPct(r.ytd) + "</span>" + inlineBar(r.ytd, ytdMax); } },
       { label: "近5日", get: function (r) { return '<span class="' + pctCls(r.w5) + '">' + fmtPct(r.w5) + "</span>"; } },
       { label: "近20日", get: function (r) { return '<span class="' + pctCls(r.w20) + '">' + fmtPct(r.w20) + "</span>"; } },
     ];
@@ -1346,9 +1493,11 @@
       '<div class="mkt-sanki"><h4>跌幅题材轮动（桑基）</h4>' + sankeySvg(data, true) + "</div>";
 
     function mini(rows, key) {
+      var mx = 1;
+      rows.forEach(function (r) { mx = Math.max(mx, Math.abs(r[key] || 0)); });
       var cols = [
         { label: "题材 / 板块", left: true, get: nameCell },
-        { label: "累计涨跌", get: function (r) { return '<span class="' + pctCls(r[key]) + '">' + fmtPct(r[key]) + "</span>"; } },
+        { label: "累计涨跌", get: function (r) { return '<span class="' + pctCls(r[key]) + '">' + fmtPct(r[key]) + "</span>" + inlineBar(r[key], mx); } },
         { label: "今日", get: function (r) { return '<span class="' + pctCls(r.basePct) + '">' + fmtPct(r.basePct) + "</span>"; } },
       ];
       return rankTable(rows, cols);
