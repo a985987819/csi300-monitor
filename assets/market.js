@@ -322,6 +322,138 @@
     }));
   }
 
+  /* ─────────── 大盘云图（行业板块 × 个股涨跌 treemap） ─────────── */
+  function pctColor(p) {
+    if (p === null || p === undefined || isNaN(p)) return "#c9cfda";   // 灰：停牌/平盘/无数据
+    if (p > 0) {
+      if (p >= 7) return "#a51c1c";
+      if (p >= 3) return "#d8434a";
+      if (p >= 1) return "#ec7d7d";
+      return "#f6baba";
+    }
+    if (p < 0) {
+      if (p <= -7) return "#0c7a3e";
+      if (p <= -3) return "#1fa363";
+      if (p <= -1) return "#5cc08d";
+      return "#aedcc0";
+    }
+    return "#c9cfda";
+  }
+  function pctText(p) {
+    if (p === null || p === undefined || isNaN(p)) return "#26314a";
+    return Math.abs(p) >= 3 ? "#ffffff" : "#26314a";
+  }
+  // squarified treemap：items 按值降序，v 已缩放为目标面积
+  function treemapSquarify(items, x, y, w, h, out) {
+    var rest = items.slice();
+    function worstRatio(row, len) {
+      var s = 0, wst = 0;
+      row.forEach(function (it) { s += it.v; });
+      if (s <= 0 || len <= 0) return Infinity;
+      var th = s / len;
+      row.forEach(function (it) {
+        var wi = it.v / th;
+        if (wi <= 0) { wst = Infinity; return; }
+        wst = Math.max(wst, Math.max(th / wi, wi / th));
+      });
+      return wst;
+    }
+    while (rest.length) {
+      // 残余区域过小时，剩余节点以最小可见方块堆叠（保证全部节点都被放置）
+      if (w <= 0.01 || h <= 0.01) {
+        rest.forEach(function (it) {
+          out.push({ d: it.d, x: x, y: y, w: Math.max(1, w), h: Math.max(1, h) });
+        });
+        break;
+      }
+      var row = [rest.shift()];
+      var rowArea = row[0].v;
+      var len = Math.max(w, h);
+      while (rest.length) {
+        var row2 = row.concat([rest[0]]);
+        if (worstRatio(row2, len) <= worstRatio(row, len)) {
+          row = row2;
+          rowArea += rest.shift().v;
+        } else break;
+      }
+      rowArea = row.reduce(function (s2, it) { return s2 + it.v; }, 0);
+      if (w >= h) {
+        var rh = rowArea / w;
+        var cx = x;
+        row.forEach(function (it) {
+          var rw = rowArea > 0 ? it.v / rh : 0;
+          out.push({ d: it.d, x: cx, y: y, w: Math.min(rw, x + w - cx), h: rh });
+          cx += rw;
+        });
+        y += rh; h -= rh;
+      } else {
+        var rw2 = rowArea / h;
+        var cy = y;
+        row.forEach(function (it) {
+          var rh2 = rowArea > 0 ? it.v / rw2 : 0;
+          out.push({ d: it.d, x: x, y: cy, w: rw2, h: Math.min(rh2, y + h - cy) });
+          cy += rh2;
+        });
+        x += rw2; w -= rw2;
+      }
+    }
+    return out;
+  }
+  // 板块成分股（fs=b:BKxxxx，含涨跌幅与流通市值）
+  function fetchBoardConstituents(code) {
+    var out = [], total = Infinity, pn = 1;
+    function page() {
+      if ((pn - 1) * 500 >= total) return Promise.resolve();
+      var path = "/api/qt/clist/get?pn=" + pn + "&pz=500&po=1&np=1&fltt=2&invt=2&fid=f3&fs=b:" + code +
+        "&fields=f12,f14,f3,f21";
+      return fetchJsonp(path, CLIST_HOSTS).then(function (d) {
+        var data = d && d.data;
+        if (!data || !data.diff || !data.diff.length) return;
+        total = data.total || out.length;
+        data.diff.forEach(function (r) {
+          out.push({ c: r.f12, n: r.f14, p: num(r.f3), cap: num(r.f21) });
+        });
+        pn++;
+        return page();
+      });
+    }
+    return page().then(function () { return out; });
+  }
+  function fetchCloud(state, stale) {
+    var codes = Object.keys(state.boards).filter(function (c) { return state.boards[c].type === "ind"; });
+    var total = codes.length, done = 0;
+    var boards = [];
+    function work() {
+      if (stale()) return Promise.resolve();
+      if (!codes.length) return Promise.resolve();
+      var code = codes.shift();
+      var b = state.boards[code];
+      return fetchBoardConstituents(code).then(function (stocks) {
+        var valid = [], totalCap = 0;
+        stocks.forEach(function (s2) {
+          if (s2.cap !== null && s2.cap > 0) { valid.push(s2); totalCap += s2.cap; }
+        });
+        if (valid.length >= 2 && totalCap > 0) {
+          boards.push({
+            code: code, name: b.name,
+            pct: (b.basePct !== null && b.basePct !== undefined) ? b.basePct : b.f3,
+            stocks: valid, totalCap: totalCap,
+          });
+        }
+      }).catch(function () {}).then(function () {
+        done++;
+        chipText("云图板块成分 " + done + "/" + total + " …", true);
+        return work();
+      });
+    }
+    var workers = [];
+    for (var w = 0; w < 4; w++) workers.push(work());
+    return Promise.all(workers).then(function () {
+      boards.sort(function (a, b) { return b.totalCap - a.totalCap; });
+      return { boards: boards };
+    });
+  }
+
   /* ─────────── 基准日与窗口计算 ─────────── */
   // 从日K确定基准日（bars 含今日盘中bar且未收盘时，剔除今日）
   function resolveBase(bars) {
@@ -432,6 +564,7 @@
     $("mktBody").innerHTML =
       mktBlock("大盘指数", "今日 · 成交额 · 近5日 · 近20日 · 上涨家数占比", '<div id="mktIdxWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(4) + "</div></div>") +
       mktBlock("今日盘面", "情绪温度 · 主力资金流向与持续性 · 振幅质量（基准日收盘口径）", '<div id="mktTodayWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(3) + "</div></div>") +
+      mktBlock("大盘云图", "行业板块 × 个股涨跌（方块大小=流通市值，颜色=涨跌幅）", '<div id="mktCloudWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(6) + "</div></div>") +
       mktBlock("年度纵览", "今年来板块与题材涨跌", '<div class="mkt-cards" id="mktYtdWrap">' + skelCard(2) + "</div>") +
       mktBlock("板块风险性价比", "与基金风险指标同口径：波动 / 回撤 / 收益波动比", '<div class="mkt-cards" id="mktRiskWrap">' + skelCard(1) + "</div>") +
       mktBlock("热点题材动态", "近20日 → 近5日 → 今日 的题材轮动（桑基图）",
@@ -573,10 +706,14 @@
       if (!$("mktIdxWrap")) ensureSkeleton();
       renderIndexes(state);
       chipText("基准日 " + state.baseDate + " · 获取板块K线…", true);
-      // 指数成交额（腾讯快照）+ 市场广度（f104/105/106）+ 情绪温度（涨停/跌停/炸板池）并行后台补取
+      // 指数成交额（腾讯快照）+ 市场广度（f104/105/106）+ 情绪温度（涨停/跌停/炸板池）+ 云图成分 并行后台补取
       fetchTxAmounts().then(function (a) { if (!stale() && a) { state.txAmounts = a; renderIndexes(state); } }).catch(function () {});
       fetchIndexBreadth().then(function (bd) { if (!stale() && bd) { state.breadth = bd; renderIndexes(state); } }).catch(function () {});
       fetchEmotion(state.baseDate).then(function (emo) { if (!stale() && emo) { state.emotion = emo; renderToday(state); } }).catch(function () {});
+      fetchCloud(state, stale).then(function (cloud) {
+        if (!stale() && cloud && cloud.boards.length) { state.cloud = cloud; renderCloud(state); }
+        else if (!stale()) { state.cloud = cloud; renderCloud(state); }
+      }).catch(function () {});
 
       // 阶段3：候选池 K线 → 基准日涨跌幅/振幅 + 严格5日/20日
       var cands = buildCandidates(state);
@@ -783,6 +920,7 @@
       txAmounts: state.txAmounts || null, breadth: state.breadth || null,
       emotion: state.emotion || null, txKline: !!state.txKline,
       stocks: state.stocks || null,
+      cloud: state.cloud || null,
       klineOkN: list.filter(function (b) { return b.klineOk; }).length,
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
       failN: state.klineFail + state.flowFail,
@@ -805,6 +943,7 @@
     if (!$("mktIdxWrap")) ensureSkeleton();
     renderIndexes(data);
     renderToday(data);
+    renderCloud(data);
     renderYtd(data);
     renderRisk(data);
     renderWindows(data);
@@ -1191,6 +1330,77 @@
       rankTable(rows, cols) +
       '<div class="mkt-chart">' + stocksChartHtml(data) + "</div>" +
       '<div class="mkt-foot-hint">口径与板块一致：基准日收盘数据；"连续"= 连续净流入(+)/净流出(−)天数；红绿柱为近20个交易日每日主力净流入；折线为各股归一化累计涨跌（起点=0），默认观察池：三一重工 / 柳工 / 安道麦A / 中原内配 / 美的集团。</div>';
+  }
+
+  /* ─────────── 大盘云图渲染（双层squarified treemap → SVG） ─────────── */
+  function renderCloud(data) {
+    var host = $("mktCloudWrap");
+    if (!host) return;
+    var cloud = data.cloud;
+    if (!cloud || !cloud.boards || !cloud.boards.length) {
+      host.innerHTML = '<div class="mkt-fail">云图成分数据暂不可用（行情接口限流中，稍后刷新恢复）。</div>';
+      return;
+    }
+    var W = 1180, H = 780, HEADER = 15;
+    // squarify 需要预缩放到目标面积：v = 市值占比 × 可用面积
+    var sumCap = 0;
+    cloud.boards.forEach(function (b) { sumCap += b.totalCap; });
+    var bItems = cloud.boards.slice()
+      .sort(function (a, b) { return b.totalCap - a.totalCap; })
+      .map(function (b) { return { v: sumCap > 0 ? b.totalCap / sumCap * W * H : 0, d: b }; });
+    var bRects = [];
+    treemapSquarify(bItems, 0, 0, W, H, bRects);
+    var svg = '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block" class="mkt-cloud-svg">';
+    bRects.forEach(function (br) {
+      var b = br.d;
+      var hdH = Math.min(HEADER, br.h);
+      svg += '<rect x="' + br.x.toFixed(1) + '" y="' + br.y.toFixed(1) + '" width="' + br.w.toFixed(1) + '" height="' + hdH.toFixed(1) +
+        '" fill="' + pctColor(b.pct) + '"/>';
+      if (br.w > 70) {
+        svg += '<text x="' + (br.x + 4).toFixed(1) + '" y="' + (br.y + 11.5).toFixed(1) + '" class="mkt-cloud-hd" fill="' + pctText(b.pct) + '">' +
+          esc(b.name) + " " + esc(fmtPct(b.pct, 1)) + "</text>";
+      }
+      if (br.h > HEADER + 8 && br.w > 16) {
+        var innerH = br.h - hdH;
+        var innerArea = br.w * innerH;
+        var sItems = [];
+        b.stocks.forEach(function (s2) { sItems.push({ v: s2.cap / b.totalCap * innerArea, d: s2 }); });
+        sItems.sort(function (a, b2) { return b2.v - a.v; });
+        var sRects = [];
+        treemapSquarify(sItems, br.x, br.y + hdH, br.w, innerH, sRects);
+        sRects.forEach(function (sr) {
+          var s2 = sr.d;
+          var fill = pctColor(s2.p);
+          var mkt = s2.c.charAt(0) === "6" ? "sh" : (s2.c.charAt(0) === "8" || s2.c.charAt(0) === "4" ? "bj" : "sz");
+          svg += '<rect x="' + (sr.x + 0.5).toFixed(1) + '" y="' + (sr.y + 0.5).toFixed(1) + '" width="' + Math.max(1, sr.w - 1).toFixed(1) +
+            '" height="' + Math.max(1, sr.h - 1).toFixed(1) + '" fill="' + fill + '" data-code="' + esc(s2.c) + '" data-mkt="' + mkt + '"><title>' +
+            esc(s2.n) + " " + esc(s2.c) + "  涨跌 " + esc(fmtPct(s2.p)) + "  流通市值 " + esc(fmtYi(s2.cap, 0)) + "</title></rect>";
+          if (sr.w > 52 && sr.h > 32) {
+            svg += '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 13).toFixed(1) + '" class="mkt-cloud-lb" fill="' + pctText(s2.p) + '">' +
+              esc(s2.n.length > 6 ? s2.n.slice(0, 6) : s2.n) + "</text>" +
+              '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 27).toFixed(1) + '" class="mkt-cloud-lb2" fill="' + pctText(s2.p) + '">' +
+              esc(fmtPct(s2.p, 1)) + "</text>";
+          } else if (sr.w > 38 && sr.h > 17) {
+            svg += '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 12.5).toFixed(1) + '" class="mkt-cloud-lb" fill="' + pctText(s2.p) + '">' +
+              esc(s2.n.length > 5 ? s2.n.slice(0, 5) : s2.n) + "</text>";
+          } else if (sr.w > 26 && sr.h > 13) {
+            svg += '<text x="' + (sr.x + 2).toFixed(1) + '" y="' + (sr.y + 11).toFixed(1) + '" class="mkt-cloud-lb2" fill="' + pctText(s2.p) + '">' +
+              esc(s2.n.length > 3 ? s2.n.slice(0, 3) : s2.n) + "</text>";
+          }
+        });
+      }
+    });
+    svg += "</svg>";
+    host.innerHTML = svg +
+      '<div class="mkt-foot-hint">方块大小 = 个股流通市值；颜色 = 当日涨跌幅（红涨绿跌，灰=停牌/平盘）；悬浮查看明细，点击方块打开东财个股行情页。仅行业板块（概念板块个股跨板块重叠会重复计价）。实时快照：盘中为盘中涨跌，收盘后为当日收盘口径。</div>';
+    var svgEl = host.querySelector("svg");
+    if (svgEl) {
+      svgEl.addEventListener("click", function (ev) {
+        var rect = ev.target.closest("rect");
+        if (!rect || !rect.getAttribute || !rect.getAttribute("data-code")) return;
+        window.open("https://quote.eastmoney.com/" + rect.getAttribute("data-mkt") + rect.getAttribute("data-code") + ".html", "_blank");
+      });
+    }
   }
 
   /* ─────────── 桑基图（纯SVG，近20日→近5日→今日） ─────────── */
