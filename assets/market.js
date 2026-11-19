@@ -264,6 +264,9 @@
   }
 
   /* ─────────── 主流程 ─────────── */
+  function loadCache() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) { return null; }
+  }
   function chipText(t, loading) {
     var chip = $("mktChip");
     if (chip) chip.classList.toggle("loading", !!loading);
@@ -344,27 +347,32 @@
     }).then(function (idxResults) {
       if (stale()) throw new Error("aborted");
       var sh = idxResults[0];
-      if (!sh.bars.length) throw new Error("指数K线为空");
-      var base = resolveBase(sh.bars);
-      state.baseDate = base.baseDate;
-
-      state.indexes = idxResults.map(function (r) {
-        var bars = r.bars;
-        var closes = [];
-        bars.forEach(function (b) { closes.push(b.close); });
-        var bi = -1;
-        var i;
-        for (i = bars.length - 1; i >= 0; i--) { if (bars[i].date === state.baseDate) { bi = i; break; } }
-        if (bi < 0) bi = bars.length - 1;
-        return {
-          ix: r.ix,
-          close: closes[bi],
-          d0: num(bars[bi].pct),
-          w5: winPct(closes, bi, 5),
-          w20: winPct(closes, bi, 20),
-          spark: closes.slice(Math.max(0, bi - 19), bi + 1),
-        };
-      });
+      if (sh && sh.bars.length) {
+        var base = resolveBase(sh.bars);
+        state.baseDate = base.baseDate;
+        state.indexes = idxResults.map(function (r) {
+          var bars = r.bars;
+          var closes = [];
+          bars.forEach(function (b) { closes.push(b.close); });
+          var bi = -1;
+          var i;
+          for (i = bars.length - 1; i >= 0; i--) { if (bars[i].date === state.baseDate) { bi = i; break; } }
+          if (bi < 0) bi = bars.length - 1;
+          return {
+            ix: r.ix,
+            close: closes[bi],
+            d0: num(bars[bi].pct),
+            w5: winPct(closes, bi, 5),
+            w20: winPct(closes, bi, 20),
+            spark: closes.slice(Math.max(0, bi - 19), bi + 1),
+          };
+        });
+      } else {
+        // 指数K线不可用（K线接口限流）→ 基准日退化为近似值（节假日口径可能偏差一天），指数表降级
+        state.baseDate = approxBase();
+        state.indexes = [];
+        state.idxKlineFail = true;
+      }
 
       // 渲染容器就绪后填入指数表
       if (!$("mktIdxWrap")) ensureSkeleton();
@@ -563,9 +571,13 @@
   function renderIndexes(data) {
     var host = $("mktIdxWrap");
     if (!host) return;
+    if (!data.indexes || !data.indexes.length) {
+      host.innerHTML = '<div class="mkt-fail">指数数据暂不可用（K线接口限流中，稍后刷新恢复）。</div>';
+      return;
+    }
     var html = '<table class="mkt-table"><thead><tr>' +
       "<th>指数</th><th>收盘</th><th>今日</th><th>近5日</th><th>近20日</th><th style='text-align:center'>近20日走势</th></tr></thead><tbody>";
-    (data.indexes || []).forEach(function (r) {
+    data.indexes.forEach(function (r) {
       html += "<tr><td class='mkt-name-cell'>" + tag("idx") + esc(r.ix.name) +
         " <span class='mkt-dim-num'>" + esc(r.ix.tag) + "</span></td>" +
         "<td>" + (r.close === null || r.close === undefined ? "--" : r.close.toFixed(2)) + "</td>" +
@@ -609,7 +621,19 @@
     if (!withFlow.length) {
       // 兜底：盘中首次使用无基准日资金流 → 用实时值并标注
       withFlow = list.filter(function (b) { return b.mf !== null && b.mf !== undefined; });
+      withFlow.forEach(function (b) { b.baseMf = b.mf; b.baseMr = b.mr; b.pctFallback = true; });
       flowNote = '<div class="mkt-foot-hint">当前为盘中实时资金流（首次使用暂无上一交易日收盘缓存），收盘后重访即为收盘口径。</div>';
+    }
+    // 涨跌幅兜底：无K线数据（限流）时退回 clist 实时值，并按口径标注
+    var pctNote = "";
+    list.forEach(function (b) {
+      if ((b.basePct === null || b.basePct === undefined) && b.f3 !== null) { b.basePct = b.f3; b.pctFallback = true; }
+      if ((b.baseAmp === null || b.baseAmp === undefined) && b.f7 !== null) { b.baseAmp = b.f7; b.pctFallback = true; }
+    });
+    if (list.some(function (b) { return b.pctFallback; })) {
+      pctNote = data.phase === "closed"
+        ? '<div class="mkt-foot-hint">部分涨跌/振幅为收盘实时值（板块日K接口限流中）。</div>'
+        : '<div class="mkt-foot-hint">部分涨跌/振幅为盘中实时值（板块日K接口限流中，收盘后自动转为收盘口径）。</div>';
     }
     withFlow.sort(function (a, b) { return (b.baseMf || 0) - (a.baseMf || 0); });
     var inflow = withFlow.slice(0, 10);
@@ -637,7 +661,7 @@
       (outflow.length ? rankTable(outflow, flowCols) : '<div class="mkt-fail">暂无资金流数据</div>') + "</div>" +
       '<div class="mkt-card"><h4>振幅最大 TOP10 <span class="mkt-dim">板块与题材</span></h4>' +
       (amp.length ? rankTable(amp, ampCols) : '<div class="mkt-fail">暂无振幅数据</div>') + "</div>" +
-      flowNote;
+      flowNote + pctNote;
   }
 
   function renderYtd(data) {
@@ -695,7 +719,7 @@
       '<div class="mkt-card"><h4>近5日跌幅最大 <span class="mkt-dim">累计%</span></h4>' + mini(windowTop(data, "w5", 8, true), "w5") + "</div>" +
       '<div class="mkt-card"><h4>近20日涨幅最大 <span class="mkt-dim">累计%</span></h4>' + mini(windowTop(data, "w20", 8, false), "w20") + "</div>" +
       '<div class="mkt-card"><h4>近20日跌幅最大 <span class="mkt-dim">累计%</span></h4>' + mini(windowTop(data, "w20", 8, true), "w20") + "</div>" +
-      '<div class="mkt-foot-hint">窗口为截至基准日（' + esc(data.baseDate) + " 收盘）的交易日累计涨跌幅；行业板块全量计算，题材按各窗口榜单极值纳入候选池。</div>";
+      '<div class="mkt-foot-hint">窗口为截至基准日（' + esc(data.baseDate) + " 收盘）的交易日累计涨跌幅；行业板块全量计算，题材按各窗口榜单极值纳入候选池。窗口数据需板块日K，接口限流时显示为空，稍后刷新恢复。</div>";
   }
 
   /* ─────────── 桑基图（纯SVG，近20日→近5日→今日） ─────────── */
@@ -714,7 +738,7 @@
       return { label: cd.label, rows: rows, field: f };
     });
     var any = cols.some(function (c) { return c.rows.length > 0; });
-    if (!any) return '<div class="mkt-fail">暂无窗口数据</div>';
+    if (!any) return '<div class="mkt-fail">窗口数据暂不可用（板块日K限流中，稍后刷新恢复）。</div>';
 
     var W = 680, rowH = 30, topPad = 26, botPad = 8;
     var H = topPad + TOPN * rowH + botPad;
@@ -783,5 +807,5 @@
   });
 
   // 调试钩子：控制台可注入 mock 数据验证渲染管线（window.__mktDebug.renderAll(data)）
-  window.__mktDebug = { renderAll: renderAll, ensureSkeleton: ensureSkeleton, approxBase: approxBase, afterClose: afterClose };
+  window.__mktDebug = { renderAll: renderAll, ensureSkeleton: ensureSkeleton, approxBase: approxBase, afterClose: afterClose, loadMarket: loadMarket };
 })();
