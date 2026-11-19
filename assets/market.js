@@ -339,10 +339,11 @@
       renderYtd({ boards: state.boards, baseDate: approxBase(), phase: state.phase });
       chipText("板块就绪 " + state.boardTotal + " 个 · 获取指数K线…", true);
 
-      // 阶段2：指数日K → 基准日 + 指数统计
+      // 阶段2：指数日K → 基准日 + 指数统计（单指数失败容忍，全败则降级）
       var begIdx = ymdShift(-80);
       return Promise.all(INDEXES.map(function (ix) {
-        return fetchKline(ix.secid, begIdx).then(function (bars) { return { ix: ix, bars: bars }; });
+        return fetchKline(ix.secid, begIdx).then(function (bars) { return { ix: ix, bars: bars }; })
+          .catch(function () { return { ix: ix, bars: [] }; });
       }));
     }).then(function (idxResults) {
       if (stale()) throw new Error("aborted");
