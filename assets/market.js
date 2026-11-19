@@ -38,6 +38,9 @@
 
   var gen = 0;            // 加载代际（强制刷新时作废旧加载）
   var loadingGen = -1;    // 正在进行的加载代际
+  var currentBaseDate = null;   // 当前已渲染数据的基准日（自动切换判断用）
+  var autoFetchDate = null;     // 收盘后自动切换：当日已尝试标记（幂等防重复）
+  var autoFailAt = 0;           // 上次自动尝试失败时间（10分钟冷却后允许重试）
 
   /* ─────────── 基础工具 ─────────── */
   function $(id) { return document.getElementById(id); }
@@ -652,7 +655,7 @@
       '<section class="mkt-block"><div class="mkt-foot-hint">提示：数据由浏览器直连东方财富公开行情接口（push2 集群）。「接口连接被重置」为东财对该出口 IP 的临时限流，通常十几分钟至一小时自行恢复，期间基金页实时数据不受影响；恢复后点「⟳ 刷新」即可。</div></section>';
   }
 
-  /* ─────────── 主流程 ─────────── */
+  /* ─────────── 主流程（三级数据源：①localStorage ②服务器本地快照 ③东财直连） ─────────── */
   function loadCache() {
     try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) { return null; }
   }
@@ -663,6 +666,16 @@
   }
   function setRule(t) { var el = $("mktRule"); if (el) el.textContent = t; }
 
+  var SERVER_OK = null;        // null=未探测；探测一次本地中继是否可用（健康检查零限流开销）
+  function ensureServer() {
+    if (SERVER_OK !== null) return Promise.resolve(SERVER_OK);
+    if (location.protocol === "file:") { SERVER_OK = false; return Promise.resolve(false); }
+    return fetch("/api/health", { cache: "no-store" })
+      .then(function (r) { SERVER_OK = !!r.ok; })
+      .catch(function () { SERVER_OK = false; })
+      .then(function () { return SERVER_OK; });
+  }
+
   function loadMarket(force) {
     if (!force && loadingGen === gen) return;   // 已在加载中
     var myGen = ++gen;
@@ -670,11 +683,12 @@
     var stale = function () { return myGen !== gen; };
     ensureSkeleton();
     setRule("");
+    var approx = approxBase();
 
-    // 缓存命中判断（近似基准日，无网络开销）
+    // ① localStorage 缓存命中（无网络开销）
     if (!force) {
       var cached = loadCache();
-      if (cached && cached.baseDate === approxBase() && cached.boards) {
+      if (cached && cached.baseDate === approx && cached.boards) {
         renderAll(cached);
         chipText("数据截至 " + cached.baseDate + " 收盘 · 本地缓存", false);
         setRule("基准日 " + cached.baseDate + " · 采集于 " + fmtClock(cached.savedAt) + " · 当日重访秒开");
@@ -683,6 +697,31 @@
       }
     }
 
+    // ② 服务器本地快照（同机所有浏览器共享；命中则零东财请求）→ ③ 未命中走东财直连
+    ensureServer().then(function (ok) {
+      if (stale()) return null;
+      if (!ok) return null;
+      return fetch("/api/mkt/get?date=" + approx, { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; });
+    }).then(function (snap) {
+      if (stale()) return;
+      if (snap && snap.v === 4 && snap.baseDate === approx && snap.boards) {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(snap)); } catch (e) {}
+        renderAll(snap);
+        chipText("数据截至 " + snap.baseDate + " 收盘 · 服务器本地快照", false);
+        setRule("基准日 " + snap.baseDate + " · 采集于 " + fmtClock(snap.savedAt) + " · 本机快照直读，零东财请求");
+        loadingGen = -1;
+        return;
+      }
+      startEastFetch(stale);
+    }).catch(function () {
+      if (!stale() && loadingGen === gen) startEastFetch(stale);
+    });
+  }
+
+  // 东财直连获取链（阶段1清单 → 2指数 → 3板块K线 → 4资金流 → 5个股），按 stale 代际作废
+  function startEastFetch(stale) {
     var state = { boards: {}, phase: afterClose() ? "closed" : "open", klineFail: 0, flowFail: 0, events: null };
 
     chipText("获取板块清单…", true);
@@ -844,11 +883,12 @@
     }).then(function () {
       if (stale()) throw new Error("aborted");
       finalize(state);
-    }).catch(function (e) {
-      if (stale() || (e && e.message === "aborted")) return;
-      loadingGen = -1;
-      chipText("市场数据获取失败：" + (e && e.message || "网络错误") + "（可点「⟳ 刷新」重试）", false);
-    });
+      }).catch(function (e) {
+        if (stale() || (e && e.message === "aborted")) return;
+        loadingGen = -1;
+        autoFailAt = Date.now();
+        chipText("市场数据获取失败：" + (e && e.message || "网络错误") + "（可点「⟳ 刷新」重试）", false);
+      });
   }
 
   // 候选池：各窗口榜单极值并集（行业全量；题材取极值），保证 TOP10 榜单全覆盖
@@ -1007,6 +1047,13 @@
       failN: state.klineFail + state.flowFail,
     };
     try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
+    // 双写：本机服务器快照（data/mkt/{基准日}.json），同机其他浏览器当日零请求直读
+    if (SERVER_OK) {
+      try {
+        fetch("/api/mkt/save", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data) }).catch(function () {});
+      } catch (e) {}
+    }
     renderAll(data);
     loadingGen = -1;
     var live = state.phase === "open";
@@ -1070,6 +1117,7 @@
 
   function renderAll(data) {
     if (!$("mktIdxWrap")) ensureSkeleton();
+    currentBaseDate = data.baseDate || currentBaseDate;
     renderIndexes(data);
     renderToday(data);
     renderCloud(data);
@@ -1764,12 +1812,29 @@
     loadMarket(false);
   }
 
+  // 收盘后自动切换当日数据：15:05 起每分钟检查一次，当日仅尝试一次（失败10分钟冷却后可再试）
+  function autoTransition() {
+    if (document.visibilityState && document.visibilityState !== "visible") return;   // 后台标签页不请求
+    if (!afterClose()) return;                                                        // 未收盘：维持上一交易日口径
+    var today = bjNow().date;
+    if (currentBaseDate === today) { autoFetchDate = today; return; }                 // 已是当日口径
+    if (autoFetchDate === today) {
+      if (!autoFailAt || Date.now() - autoFailAt < 10 * 60 * 1000) return;            // 今日已尝试：失败后10分钟冷却
+    }
+    if (loadingGen !== -1) return;                                                    // 加载进行中，下个周期再判
+    autoFetchDate = today;
+    autoFailAt = 0;
+    loadMarket(false);
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     var pill = document.querySelector('.nav-pill[data-tab="market"]');
     if (!pill) return;
     pill.addEventListener("click", function () { onActivate(); });
     $("mktRefresh").addEventListener("click", function () { loadMarket(true); });
     if (pill.classList.contains("active")) onActivate();
+    // 收盘后自动切换当日数据：每分钟检查（可见标签页才请求），当日仅尝试一次
+    setInterval(autoTransition, 60000);
   });
 
   // 调试钩子：控制台可注入 mock 数据验证渲染管线（window.__mktDebug.renderAll(data)）

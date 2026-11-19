@@ -43,6 +43,21 @@ _cache_hits = [0, 0]  # hit, miss
 DISK_CACHE_DIR = os.path.join(ROOT, "cache", "relay")
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
 
+# 市场页基准日快照（当日首个成功获取落盘，之后全部浏览器零请求直读本地）
+MKT_DIR = os.path.join(ROOT, "data", "mkt")
+os.makedirs(MKT_DIR, exist_ok=True)
+MKT_KEEP = 20          # 保留最近 20 个基准日快照
+
+
+def _prune_mkt():
+    try:
+        files = [os.path.join(MKT_DIR, f) for f in os.listdir(MKT_DIR) if f.endswith(".json")]
+        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for old in files[MKT_KEEP:]:
+            os.remove(old)
+    except Exception:
+        pass
+
 # 全局限速：两次对东财的出站请求至少间隔 PACE_GAP 秒（串行放行，规避突发限流）
 PACE_GAP = 1.2
 _pace_lock = threading.Lock()
@@ -155,6 +170,33 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self._send(200, b"", "text/plain")
 
+    def do_POST(self):
+        try:
+            u = urllib.parse.urlparse(self.path)
+            if u.path != "/api/mkt/save":
+                return self._send(404, "not found".encode(), "text/plain; charset=utf-8")
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 2 or length > 3 * 1024 * 1024:
+                return self._send(400, "bad size".encode(), "text/plain; charset=utf-8")
+            raw = self.rfile.read(length)
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except Exception:
+                return self._send(400, "bad json".encode(), "text/plain; charset=utf-8")
+            date = str(data.get("baseDate") or "")
+            import re
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                return self._send(400, "bad date".encode(), "text/plain; charset=utf-8")
+            with io.open(os.path.join(MKT_DIR, date + ".json"), "w", encoding="utf-8") as f:
+                f.write(raw.decode("utf-8"))
+            _prune_mkt()
+            return self._send(200, ('{"saved":true,"date":"%s"}' % date).encode(), "application/json")
+        except Exception as e:  # noqa: BLE001
+            try:
+                self._send(500, ("error: %s" % e).encode(), "text/plain; charset=utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+
     def do_GET(self):
         try:
             u = urllib.parse.urlparse(self.path)
@@ -166,6 +208,18 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/stats":
                 msg = '{"relay_hit":%d,"relay_miss":%d}' % (_cache_hits[0], _cache_hits[1])
                 return self._send(200, msg.encode(), "application/json")
+
+            if path == "/api/mkt/get":
+                q = urllib.parse.parse_qs(u.query)
+                date = (q.get("date") or [""])[0]
+                import re
+                if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                    return self._send(400, "bad date".encode(), "text/plain; charset=utf-8")
+                fp = os.path.join(MKT_DIR, date + ".json")
+                if os.path.isfile(fp):
+                    with io.open(fp, "rb") as f:
+                        return self._send(200, f.read(), "application/json; charset=utf-8", "no-store")
+                return self._send(404, '{"miss":true}'.encode(), "application/json")
 
             if path == "/api/east":
                 q = urllib.parse.parse_qs(u.query)
