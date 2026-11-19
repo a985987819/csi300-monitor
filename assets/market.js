@@ -42,6 +42,25 @@
   var autoFetchDate = null;     // 收盘后自动切换：当日已尝试标记（幂等防重复）
   var autoFailAt = 0;           // 上次自动尝试失败时间（10分钟冷却后允许重试）
 
+  /* ─────────── 数据源注册表（可在页面切换；不同源保持一致的渲染，缺失数据标注能力边界） ─────────── */
+  var PROVIDERS = {
+    em:   { label: "东方财富", caps: { boards: true, cloud: true, flow: true, emotion: true, events: true } },
+    sina: { label: "新浪财经", caps: { boards: true, cloud: true, flow: false, emotion: false, events: false } },
+    tx:   { label: "腾讯行情", caps: { boards: false, cloud: false, flow: false, emotion: false, events: false } },
+  };
+  var activeProvider = (function () {
+    try {
+      var p = localStorage.getItem("hs300.mkt.provider");
+      return PROVIDERS[p] ? p : "em";
+    } catch (e) { return "em"; }
+  })();
+  function lsKey() { return LS_KEY + "." + activeProvider; }
+  function cap() { return PROVIDERS[activeProvider].caps; }
+  function capNote(moduleName) {
+    return '<div class="mkt-fail">' + esc(PROVIDERS[activeProvider].label) +
+      " 数据源不提供" + esc(moduleName) + "数据——切换「东方财富」查看完整版。</div>";
+  }
+
   /* ─────────── 基础工具 ─────────── */
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -530,7 +549,102 @@
     });
   }
 
+  /* ─────────── 新浪财经数据源（板块清单 GBK 经中继解码 / 成分股 CORS 直连 / 日K var包装script） ─────────── */
+  function fetchSinaBoards() {
+    var target = encodeURIComponent("https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php");
+    return fetch("/api/east?u=" + target).then(function (r) { return r.arrayBuffer(); })
+      .then(function (buf) {
+        var text = new TextDecoder("gbk").decode(buf);
+        var m = text.match(/=\s*(\{[\s\S]*\})/);
+        if (!m) throw new Error("sina format");
+        var obj = JSON.parse(m[1]);
+        var out = [];
+        Object.keys(obj).forEach(function (k) {
+          var p = String(obj[k]).split(",");
+          if (p.length < 13) return;
+          out.push({ code: p[0], name: p[1], f3: num(p[5]), amt: num(p[6]),
+                     leader: p[12] || "--", leaderPct: num(p[9]) });
+        });
+        return out;
+      });
+  }
+  function fetchSinaConstituents(node) {
+    // 流通市值 nmc 单位为万元 → 统一转元
+    return fetch("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?node=" +
+        node + "&page=1&num=100&sort=amount&asc=0")
+      .then(function (r) { return r.json(); })
+      .then(function (arr) {
+        var out = [];
+        (arr || []).forEach(function (r) {
+          out.push({ c: r.code, n: r.name, p: num(r.changepercent),
+                     cap: num(r.nmc) !== null ? num(r.nmc) * 1e4 : null });
+        });
+        return out;
+      });
+  }
+  function fetchSinaKline(symbol) {
+    var cbName = "__snk" + (++jsonpSeq) + "_" + (Date.now() % 100000);
+    var url = "https://quotes.sina.cn/cn/api/jsonp_v2.php/" + cbName +
+      "/CN_MarketDataService.getKLineData?symbol=" + symbol + "&scale=240&ma=no&datalen=60";
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; s.remove(); reject(new Error("timeout")); } }, 12000);
+      window[cbName] = function (arr) {
+        if (done) return;
+        done = true; clearTimeout(to); s.remove();
+        var bars = [];
+        (arr || []).forEach(function (r) {
+          bars.push({ date: r.day, open: parseFloat(r.open), close: parseFloat(r.close),
+                      high: parseFloat(r.high), low: parseFloat(r.low) });
+        });
+        resolve(bars);
+      };
+      s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); reject(new Error("error")); } };
+      s.src = url;
+      document.head.appendChild(s);
+    });
+  }
+
   /* ─────────── 基准日与窗口计算 ─────────── */
+  // 各数据源共用的指数处理：基准日判定（以第1个指数K线为准）+ 指数窗口统计 + OHLC
+  function processIndexes(state, idxResults) {
+    var sh = idxResults[0];
+    if (sh && sh.bars.length) {
+      var base = resolveBase(sh.bars);
+      state.baseDate = base.baseDate;
+      state.indexes = idxResults.map(function (r) {
+        var bars = r.bars;
+        var closes = [];
+        bars.forEach(function (b) { closes.push(b.close); });
+        var bi = -1;
+        var i;
+        for (i = bars.length - 1; i >= 0; i--) { if (bars[i].date === state.baseDate) { bi = i; break; } }
+        if (bi < 0) bi = bars.length - 1;
+        var d0 = num(bars[bi].pct);
+        if (d0 === null && bi > 0 && closes[bi - 1]) d0 = (closes[bi] / closes[bi - 1] - 1) * 100;   // 腾讯/新浪降级源无pct字段
+        var ohlc = [];
+        for (var oi = Math.max(0, bi - 19); oi <= bi; oi++) {
+          ohlc.push({ o: bars[oi].open, h: bars[oi].high, l: bars[oi].low, c: bars[oi].close });
+        }
+        return {
+          ix: r.ix,
+          close: closes[bi],
+          d0: d0,
+          w5: winPct(closes, bi, 5),
+          w20: winPct(closes, bi, 20),
+          spark: closes.slice(Math.max(0, bi - 19), bi + 1),
+          ohlc: ohlc,
+        };
+      });
+    } else {
+      // 指数K线不可用（K线接口限流）→ 基准日退化为近似值（节假日口径可能偏差一天），指数表降级
+      state.baseDate = approxBase();
+      state.indexes = [];
+      state.idxKlineFail = true;
+    }
+  }
+
   // 从日K确定基准日（bars 含今日盘中bar且未收盘时，剔除今日）
   function resolveBase(bars) {
     var today = bjNow().date;
@@ -657,7 +771,7 @@
 
   /* ─────────── 主流程（三级数据源：①localStorage ②服务器本地快照 ③东财直连） ─────────── */
   function loadCache() {
-    try { return JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch (e) { return null; }
+    try { return JSON.parse(localStorage.getItem(lsKey()) || "null"); } catch (e) { return null; }
   }
   function chipText(t, loading) {
     var chip = $("mktChip");
@@ -701,23 +815,30 @@
     ensureServer().then(function (ok) {
       if (stale()) return null;
       if (!ok) return null;
-      return fetch("/api/mkt/get?date=" + approx, { cache: "no-store" })
+      return fetch("/api/mkt/get?date=" + approx + "&provider=" + activeProvider, { cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : null; })
         .catch(function () { return null; });
     }).then(function (snap) {
       if (stale()) return;
       if (snap && snap.v === 4 && snap.baseDate === approx && snap.boards) {
-        try { localStorage.setItem(LS_KEY, JSON.stringify(snap)); } catch (e) {}
+        try { localStorage.setItem(lsKey(), JSON.stringify(snap)); } catch (e) {}
         renderAll(snap);
-        chipText("数据截至 " + snap.baseDate + " 收盘 · 服务器本地快照", false);
-        setRule("基准日 " + snap.baseDate + " · 采集于 " + fmtClock(snap.savedAt) + " · 本机快照直读，零东财请求");
+        chipText("数据截至 " + snap.baseDate + " 收盘 · " + PROVIDERS[activeProvider].label + "源 · 服务器本地快照", false);
+        setRule("基准日 " + snap.baseDate + " · 采集于 " + fmtClock(snap.savedAt) + " · 本机快照直读，零上游请求");
         loadingGen = -1;
         return;
       }
-      startEastFetch(stale);
+      dispatchFetch(stale);
     }).catch(function () {
-      if (!stale() && loadingGen === gen) startEastFetch(stale);
+      if (!stale() && loadingGen === gen) dispatchFetch(stale);
     });
+  }
+
+  // 按当前数据源分派获取链
+  function dispatchFetch(stale) {
+    if (activeProvider === "sina") return startSinaFetch(stale);
+    if (activeProvider === "tx") return startTxFetch(stale);
+    startEastFetch(stale);
   }
 
   // 东财直连获取链（阶段1清单 → 2指数 → 3板块K线 → 4资金流 → 5个股），按 stale 代际作废
@@ -785,40 +906,7 @@
       });
     }).then(function (idxResults) {
       if (stale()) throw new Error("aborted");
-      var sh = idxResults[0];
-      if (sh && sh.bars.length) {
-        var base = resolveBase(sh.bars);
-        state.baseDate = base.baseDate;
-        state.indexes = idxResults.map(function (r) {
-          var bars = r.bars;
-          var closes = [];
-          bars.forEach(function (b) { closes.push(b.close); });
-          var bi = -1;
-          var i;
-          for (i = bars.length - 1; i >= 0; i--) { if (bars[i].date === state.baseDate) { bi = i; break; } }
-          if (bi < 0) bi = bars.length - 1;
-          var d0 = num(bars[bi].pct);
-          if (d0 === null && bi > 0 && closes[bi - 1]) d0 = (closes[bi] / closes[bi - 1] - 1) * 100;   // 腾讯降级源无pct字段
-          var ohlc = [];
-          for (var oi = Math.max(0, bi - 19); oi <= bi; oi++) {
-            ohlc.push({ o: bars[oi].open, h: bars[oi].high, l: bars[oi].low, c: bars[oi].close });
-          }
-          return {
-            ix: r.ix,
-            close: closes[bi],
-            d0: d0,
-            w5: winPct(closes, bi, 5),
-            w20: winPct(closes, bi, 20),
-            spark: closes.slice(Math.max(0, bi - 19), bi + 1),
-            ohlc: ohlc,
-          };
-        });
-      } else {
-        // 指数K线不可用（K线接口限流）→ 基准日退化为近似值（节假日口径可能偏差一天），指数表降级
-        state.baseDate = approxBase();
-        state.indexes = [];
-        state.idxKlineFail = true;
-      }
+      processIndexes(state, idxResults);
 
       // 渲染容器就绪后填入指数表
       if (!$("mktIdxWrap")) ensureSkeleton();
@@ -889,6 +977,127 @@
         autoFailAt = Date.now();
         chipText("市场数据获取失败：" + (e && e.message || "网络错误") + "（可点「⟳ 刷新」重试）", false);
       });
+  }
+
+  // 新浪财经获取链：板块清单（1请求全量）→ 指数K线 → 云图成分 → 个股K线；不提供资金流/情绪/事件
+  function startSinaFetch(stale) {
+    var state = { boards: {}, phase: afterClose() ? "closed" : "open", klineFail: 0, flowFail: 0, events: null };
+    chipText("新浪源 · 获取行业板块…", true);
+    return fetchSinaBoards().then(function (rows) {
+      if (stale()) throw new Error("aborted");
+      rows.forEach(function (r, i) {
+        state.boards[r.code] = {
+          code: r.code, name: r.name, type: "ind",
+          f3: r.f3, f7: null, amt: r.amt, mf: null, mr: null,
+          w5f: null, w10f: null, w60f: null, ytdf: null,
+          leader: r.leader, leaderPct: r.leaderPct, seq: i,
+        };
+      });
+      state.boardTotal = Object.keys(state.boards).length;
+      chipText("新浪源板块 " + state.boardTotal + " 个 · 获取指数K线…", true);
+      return Promise.all(INDEXES.map(function (ix) {
+        return fetchSinaKline(ix.tx).then(function (bars) { return { ix: ix, bars: bars }; })
+          .catch(function () { return { ix: ix, bars: [] }; });
+      }));
+    }).then(function (idxResults) {
+      if (stale()) throw new Error("aborted");
+      processIndexes(state, idxResults);
+      if (!$("mktIdxWrap")) ensureSkeleton();
+      renderIndexes(state);
+      renderToday(state);
+      chipText("新浪源 · 获取云图成分…", true);
+      return fetchCloudSina(state, stale);
+    }).then(function () {
+      if (stale()) throw new Error("aborted");
+      chipText("新浪源 · 获取观察个股…", true);
+      state.stocks = {};
+      STOCKS.forEach(function (sx, si) {
+        state.stocks[sx.key] = { sx: sx, name: sx.name, color: STOCK_LINE[si % STOCK_LINE.length] };
+      });
+      return Promise.all(STOCKS.map(function (sx) {
+        return fetchSinaKline(sx.tx).catch(function () { return []; }).then(function (bars) {
+          aggStock(state, sx.key, bars);
+        });
+      })).then(function () { renderStocks(state); });
+    }).then(function () {
+      if (stale()) throw new Error("aborted");
+      finalize(state);
+    }).catch(function (e) {
+      if (stale() || (e && e.message === "aborted")) return;
+      loadingGen = -1;
+      autoFailAt = Date.now();
+      chipText("新浪源获取失败：" + (e && e.message || "网络错误") + "（可点「⟳ 刷新」或切换数据源重试）", false);
+    });
+  }
+  // 新浪云图成分（逐板块 getHQNodeData）
+  function fetchCloudSina(state, stale) {
+    var codes = Object.keys(state.boards);
+    var total = codes.length, done = 0;
+    var boards = [];
+    function work() {
+      if (stale()) return Promise.resolve();
+      if (!codes.length) return Promise.resolve();
+      var code = codes.shift();
+      var b = state.boards[code];
+      return fetchSinaConstituents(code).then(function (stocks) {
+        var valid = [], totalCap = 0;
+        stocks.forEach(function (s2) {
+          if (s2.cap !== null && s2.cap > 0) { valid.push(s2); totalCap += s2.cap; }
+        });
+        if (valid.length >= 2 && totalCap > 0) {
+          boards.push({ code: code, name: b.name, pct: b.f3, stocks: valid, totalCap: totalCap });
+        }
+      }).catch(function () {}).then(function () {
+        done++;
+        chipText("新浪云图成分 " + done + "/" + total + " …", true);
+        return work();
+      });
+    }
+    var workers = [];
+    for (var w = 0; w < 4; w++) workers.push(work());
+    return Promise.all(workers).then(function () {
+      boards.sort(function (a, b) { return b.totalCap - a.totalCap; });
+      state.cloud = { boards: boards };
+      renderCloud(state);
+    });
+  }
+
+  // 腾讯行情获取链：指数快照+K线 → 个股K线；不提供板块/资金流/情绪/事件
+  function startTxFetch(stale) {
+    var state = { boards: {}, phase: afterClose() ? "closed" : "open", klineFail: 0, flowFail: 0, events: null };
+    chipText("腾讯源 · 获取指数快照与K线…", true);
+    return Promise.all([
+      fetchTxAmounts().catch(function () { return null; }),
+      Promise.all(INDEXES.map(function (ix) {
+        return fetchTxKline(ix.tx).then(function (bars) { return { ix: ix, bars: bars }; })
+          .catch(function () { return { ix: ix, bars: [] }; });
+      })),
+    ]).then(function (r) {
+      if (stale()) throw new Error("aborted");
+      state.txAmounts = r[0];
+      processIndexes(state, r[1]);
+      if (!$("mktIdxWrap")) ensureSkeleton();
+      renderIndexes(state);
+      renderToday(state);
+      chipText("腾讯源 · 获取观察个股…", true);
+      state.stocks = {};
+      STOCKS.forEach(function (sx, si) {
+        state.stocks[sx.key] = { sx: sx, name: sx.name, color: STOCK_LINE[si % STOCK_LINE.length] };
+      });
+      return Promise.all(STOCKS.map(function (sx) {
+        return fetchTxKline(sx.tx).catch(function () { return []; }).then(function (bars) {
+          aggStock(state, sx.key, bars);
+        });
+      })).then(function () { renderStocks(state); });
+    }).then(function () {
+      if (stale()) throw new Error("aborted");
+      finalize(state);
+    }).catch(function (e) {
+      if (stale() || (e && e.message === "aborted")) return;
+      loadingGen = -1;
+      autoFailAt = Date.now();
+      chipText("腾讯源获取失败：" + (e && e.message || "网络错误") + "（可点「⟳ 刷新」或切换数据源重试）", false);
+    });
   }
 
   // 候选池：各窗口榜单极值并集（行业全量；题材取极值），保证 TOP10 榜单全覆盖
@@ -1046,21 +1255,22 @@
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
       failN: state.klineFail + state.flowFail,
     };
-    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
+    try { localStorage.setItem(lsKey(), JSON.stringify(data)); } catch (e) {}
     // 双写：本机服务器快照（data/mkt/{基准日}.json），同机其他浏览器当日零请求直读
     if (SERVER_OK) {
       try {
-        fetch("/api/mkt/save", { method: "POST", headers: { "Content-Type": "application/json" },
+        fetch("/api/mkt/save?provider=" + activeProvider, { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data) }).catch(function () {});
       } catch (e) {}
     }
     renderAll(data);
     loadingGen = -1;
+    var klinePart = (data.klineOkN > 0) ? (" · " + data.klineOkN + "/" + state.boardTotal + " 板块") : "";
     var live = state.phase === "open";
-    var flowNote = (!data.flowExactN && live) ? " · 资金流为盘中实时（暂无上一交易日收盘缓存）" : "";
+    var flowNote = (!data.flowExactN && live && activeProvider === "em") ? " · 资金流为盘中实时（暂无上一交易日收盘缓存）" : "";
     var listNote = state.listFail ? " · 清单缺" + state.listFail : "";
     var txNote = data.txKline ? " · 指数为腾讯降级源" : "";
-    chipText("数据截至 " + state.baseDate + " 收盘 · " + data.klineOkN + "/" + state.boardTotal + " 板块" +
+    chipText("数据截至 " + state.baseDate + " 收盘" + klinePart +
       (data.failN ? " · 失败" + data.failN : "") + flowNote + listNote + txNote, false);
     setRule("基准日 " + state.baseDate + (live ? "（盘中，统计上一交易日）" : "（收盘后，统计当日）") +
       " · 采集于 " + fmtClock(data.savedAt) + " · 东方财富公开接口（指数快照/日K备用源：腾讯行情）");
@@ -1077,6 +1287,7 @@
   function renderEvents(data) {
     var host = $("mktEventsWrap");
     if (!host) return;
+    if (!cap().events) { host.innerHTML = capNote("龙虎榜、解禁与业绩预告"); return; }
     var ev = data.events || {};
     var lhbCols = [
       { label: "股票", left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.name) + "</span>"; } },
@@ -1387,10 +1598,27 @@
     return html + '<span class="mkt-emo-tip">情绪温度（基准日收盘口径）</span></div>';
   }
 
+  // 行业板块当日上涨占比（有≥5个板块数据时计算，否则 null）
+  function boardUpPctOf(list) {
+    var ind = list.filter(function (b) { return b.type === "ind" && b.f3 !== null; });
+    if (ind.length < 5) return null;
+    var up = 0;
+    ind.forEach(function (b) { if (b.f3 > 0) up++; });
+    return up / ind.length * 100;
+  }
+
   function renderToday(data) {
     var host = $("mktTodayWrap");
     if (!host) return;
     var list = [];
+    Object.keys(data.boards).forEach(function (c) { list.push(data.boards[c]); });
+    var boardUpPct = boardUpPctOf(list);
+    if (!cap().flow) {
+      // 非东财源：保留广度仪表，资金流/情绪池/振幅标注能力边界
+      host.innerHTML = '<div class="mkt-emoline">' + emotionGauge(data.emotion, boardUpPct) + emotionStrip(data.emotion, boardUpPct) + "</div>" +
+        capNote("板块主力资金流向、涨跌停池与振幅明细");
+      return;
+    }
     Object.keys(data.boards).forEach(function (c) { list.push(data.boards[c]); });
     var withFlow = list.filter(function (b) { return b.baseMf !== null && b.baseMf !== undefined; });
     var flowNote = "";
@@ -1415,14 +1643,6 @@
     var amp = list.filter(function (b) { return b.baseAmp !== null && b.baseAmp !== undefined; })
       .sort(function (a, b) { return b.baseAmp - a.baseAmp; }).slice(0, 10);
 
-    // 板块上涨占比（行业板块当日上涨家数 / 有数据的行业板块数）
-    var indList = list.filter(function (b) { return b.type === "ind" && b.f3 !== null; });
-    var boardUpPct = null;
-    if (indList.length >= 5) {
-      var upN = 0;
-      indList.forEach(function (b) { if (b.f3 > 0) upN++; });
-      boardUpPct = upN / indList.length * 100;
-    }
 
     var ampCols = [
       { label: "板块 / 题材", left: true, get: nameCell },
@@ -1448,6 +1668,7 @@
   function renderYtd(data) {
     var host = $("mktYtdWrap");
     if (!host) return;
+    if (!cap().boards) { host.innerHTML = capNote("板块年初至今涨跌"); return; }
     var inSession = data.phase === "open";
     var list = [];
     Object.keys(data.boards).forEach(function (c) {
@@ -1481,6 +1702,7 @@
   function renderRisk(data) {
     var host = $("mktRiskWrap");
     if (!host) return;
+    if (activeProvider !== "em") { host.innerHTML = capNote("板块风险性价比（需板块日K）"); return; }
     var list = [];
     Object.keys(data.boards).forEach(function (c) {
       var b = data.boards[c];
@@ -1534,6 +1756,13 @@
 
   function renderWindows(data) {
     var sankeyHost = $("mktSankeyWrap");
+    if (activeProvider !== "em") {
+      var note = capNote("近5日/20日窗口与题材桑基（需板块日K）");
+      if (sankeyHost) sankeyHost.innerHTML = note;
+      var tw = document.getElementById("mktWindowWrap");
+      if (tw) tw.innerHTML = note;
+      return;
+    }
     var tblHost = $("mktWindowWrap");
     if (!sankeyHost || !tblHost) return;
     sankeyHost.innerHTML =
@@ -1669,6 +1898,7 @@
   function renderCloud(data) {
     var host = $("mktCloudWrap");
     if (!host) return;
+    if (!cap().cloud) { host.innerHTML = capNote("板块成分与个股云图"); return; }
     var cloud = data.cloud;
     if (!cloud || !cloud.boards || !cloud.boards.length) {
       host.innerHTML = '<div class="mkt-fail">云图成分数据暂不可用（行情接口限流中，稍后刷新恢复）。</div>';
@@ -1809,6 +2039,8 @@
   /* ─────────── 激活与刷新 ─────────── */
   function onActivate() {
     ensureSkeleton();
+    var ov = document.getElementById("loadOverlay");
+    if (ov) ov.hidden = true;   // 基金页的加载卡不悬浮在市场页上（基金加载继续后台进行）
     loadMarket(false);
   }
 
@@ -1833,6 +2065,23 @@
     pill.addEventListener("click", function () { onActivate(); });
     $("mktRefresh").addEventListener("click", function () { loadMarket(true); });
     if (pill.classList.contains("active")) onActivate();
+    // 数据源切换：持久化 + 各源独立缓存/快照，切换即重取
+    var provBox = $("mktProv");
+    if (provBox) {
+      provBox.addEventListener("click", function (ev) {
+        var b = ev.target.closest("button[data-p]");
+        if (!b || b.classList.contains("on")) return;
+        var p = b.getAttribute("data-p");
+        if (!PROVIDERS[p]) return;
+        activeProvider = p;
+        try { localStorage.setItem("hs300.mkt.provider", activeProvider); } catch (e) {}
+        provBox.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        onActivate();   // 命中该源已有缓存/快照则秒切，否则重取
+      });
+      provBox.querySelectorAll("button").forEach(function (x) {
+        x.classList.toggle("on", x.getAttribute("data-p") === activeProvider);
+      });
+    }
     // 收盘后自动切换当日数据：每分钟检查（可见标签页才请求），当日仅尝试一次
     setInterval(autoTransition, 60000);
   });

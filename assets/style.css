@@ -992,3 +992,21 @@ html.dark .mkt-tag-div { background: rgba(245, 158, 11, 0.22); color: #f2b85c; }
 .mkt-legend-item { display: inline-flex; align-items: center; gap: 5px; }
 .mkt-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 html.dark .mkt-gauge-num b { color: var(--text-strong); }
+
+/* 市场页：数据源切换器 / 模块入场动效 / 图表动画 */
+.mkt-prov { display: inline-flex; background: var(--pill); border-radius: 8px; padding: 3px; gap: 2px; }
+.mkt-prov button {
+  border: none; background: transparent; color: var(--pill-text);
+  font-size: 12.5px; font-family: inherit; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mkt-prov button:hover { color: var(--pill-hover-text); background: var(--pill-hover); }
+.mkt-prov button.on { background: var(--panel); color: var(--pill-active-text); font-weight: 700;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.15); }
+.mkt-block { animation: mktIn 0.3s ease both; }
+@keyframes mktIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.fb-bar { animation: barGrow 0.5s cubic-bezier(0.22, 0.8, 0.36, 1) both; }
+.mkt-ibar-fill { animation: barGrow 0.45s ease-out both; }
+@keyframes barGrow { from { width: 0 !important; } }
+.mkt-chart svg { animation: mktIn 0.35s ease both; }
+.page#page-market { scroll-behavior: smooth; }

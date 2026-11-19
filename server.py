@@ -32,6 +32,7 @@ REFERERS = {
     "api.fund.eastmoney.com": "https://fund.eastmoney.com/",
     "push2his.eastmoney.com": "https://quote.eastmoney.com/",
     "fundmobapi.eastmoney.com": "https://fund.eastmoney.com/",
+    "vip.stock.finance.sina.com.cn": "https://finance.sina.com.cn/",
 }
 
 _cache = {}          # url -> (ts, body, ctype)
@@ -175,6 +176,11 @@ class Handler(BaseHTTPRequestHandler):
             u = urllib.parse.urlparse(self.path)
             if u.path != "/api/mkt/save":
                 return self._send(404, "not found".encode(), "text/plain; charset=utf-8")
+            q = urllib.parse.parse_qs(u.query)
+            prov = (q.get("provider") or ["em"])[0]
+            import re
+            if not re.match(r"^[a-z]{1,6}$", prov):
+                return self._send(400, "bad provider".encode(), "text/plain; charset=utf-8")
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 2 or length > 3 * 1024 * 1024:
                 return self._send(400, "bad size".encode(), "text/plain; charset=utf-8")
@@ -184,13 +190,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return self._send(400, "bad json".encode(), "text/plain; charset=utf-8")
             date = str(data.get("baseDate") or "")
-            import re
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
                 return self._send(400, "bad date".encode(), "text/plain; charset=utf-8")
-            with io.open(os.path.join(MKT_DIR, date + ".json"), "w", encoding="utf-8") as f:
+            fname = (prov + "-") if prov != "em" else ""
+            with io.open(os.path.join(MKT_DIR, fname + date + ".json"), "w", encoding="utf-8") as f:
                 f.write(raw.decode("utf-8"))
             _prune_mkt()
-            return self._send(200, ('{"saved":true,"date":"%s"}' % date).encode(), "application/json")
+            return self._send(200, ('{"saved":true,"date":"%s","provider":"%s"}' % (date, prov)).encode(), "application/json")
         except Exception as e:  # noqa: BLE001
             try:
                 self._send(500, ("error: %s" % e).encode(), "text/plain; charset=utf-8")
@@ -212,10 +218,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/mkt/get":
                 q = urllib.parse.parse_qs(u.query)
                 date = (q.get("date") or [""])[0]
+                prov = (q.get("provider") or ["em"])[0]
                 import re
-                if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-                    return self._send(400, "bad date".encode(), "text/plain; charset=utf-8")
-                fp = os.path.join(MKT_DIR, date + ".json")
+                if not re.match(r"^\d{4}-\d{2}-\d{2}$", date) or not re.match(r"^[a-z]{1,6}$", prov):
+                    return self._send(400, "bad params".encode(), "text/plain; charset=utf-8")
+                fname = (prov + "-") if prov != "em" else ""
+                fp = os.path.join(MKT_DIR, fname + date + ".json")
                 if os.path.isfile(fp):
                     with io.open(fp, "rb") as f:
                         return self._send(200, f.read(), "application/json; charset=utf-8", "no-store")
