@@ -874,7 +874,14 @@ body.colorize td.down { color: #0a9c46; }
 }
 .mkt-sec-title { margin: 0 0 10px; font-size: 14px; color: var(--text-strong); display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .mkt-sec-title .mkt-dim { color: var(--text-faint); font-size: 12px; font-weight: 400; }
-.mkt-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+/* 卡片网格：默认两列（宽度可预测，表格不会被 auto-fit 拆出空列而变窄） */
+.mkt-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+/* 表格类卡片：龙虎榜/解禁/业绩预告每张占满一行，数值列不再被挤成省略号 */
+.mkt-cards-full { grid-template-columns: 1fr; }
+/* 脚注 / 能力边界提示若写在 .mkt-cards 里会变成"第二/三列"，把表格挤窄——让它们整行独占 */
+.mkt-cards > .mkt-foot-hint,
+.mkt-cards > .mkt-fail { grid-column: 1 / -1; }
+@media (max-width: 980px) { .mkt-cards { grid-template-columns: 1fr; } }
 .mkt-card { border: 1px solid var(--t-border); border-radius: 10px; padding: 10px 12px 12px; background: var(--t-bg); min-width: 0; }
 .mkt-card h4 { margin: 0 0 8px; font-size: 13px; color: var(--text-strong); display: flex; align-items: center; gap: 8px; }
 .mkt-card h4 .mkt-dim { color: var(--text-faint); font-size: 11.5px; font-weight: 400; }
@@ -897,7 +904,7 @@ body.colorize td.down { color: #0a9c46; }
 .mkt-num-up { color: var(--danger); font-weight: 600; }
 .mkt-num-down { color: #0a9c46; font-weight: 600; }
 .mkt-dim-num { color: var(--t-dim); }
-.mkt-rank { color: var(--t-dim); font-size: 11px; width: 22px; }
+.mkt-rank { color: var(--t-dim); font-size: 11px; }
 
 .mkt-tag {
   display: inline-block; font-size: 10.5px; line-height: 1; padding: 3px 6px; border-radius: 4px;
@@ -928,8 +935,10 @@ html.dark .mkt-num-down { color: #26b06a; }
 html.dark .mkt-tag-ind { background: rgba(47, 102, 255, 0.18); color: #8fb0ff; }
 html.dark .mkt-tag-con { background: rgba(16, 179, 160, 0.20); color: #5fd3c6; }
 html.dark .mkt-tag-idx { background: rgba(245, 158, 11, 0.20); color: #f2b85c; }
-.mkt-table th.mkt-col-name { width: 42%; text-align: left; }
+.mkt-table th.mkt-col-name { text-align: left; }
 .mkt-table td.mkt-name-td { text-align: left; }
+/* 长文本单元格：占满列宽后再省略，配合 colgroup 定宽不会挤压数值列 */
+.mkt-table .mkt-ellip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 
 /* 市场页：情绪温度条 / 背离角标 / 广度条 */
 .mkt-emo { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
