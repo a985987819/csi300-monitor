@@ -1450,7 +1450,7 @@
     });
     // 图例：每组三根柱依次为 今日/近5日/近20日，柱色=涨跌方向
     var legend = '<span class="mkt-legend"><span class="mkt-legend-item">每组三柱依次为：今日 · 近5日 · 近20日（红涨绿跌）</span></span>';
-    return '<div class="mkt-chart">' + legend + '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block">' + g + "</svg>" +
+    return '<div class="mkt-chart mkt-chart-half">' + legend + '<svg viewBox="0 0 ' + W + " " + H + '" style="width:100%;height:auto;display:block">' + g + "</svg>" +
       '<div class="mkt-foot-hint">柱高=涨跌幅绝对值（变幅对比），红=上涨、绿=下跌；悬浮查看精确值。</div></div>';
   }
 
@@ -1904,11 +1904,58 @@
     ];
     host.innerHTML =
       rankTable(rows, cols) +
-      '<div class="mkt-chart">' + stocksChartHtml(data) + "</div>" +
+      '<div class="mkt-chart mkt-chart-half">' + stocksChartHtml(data) + "</div>" +
       '<div class="mkt-foot-hint">口径与板块一致：基准日收盘数据；"连续"= 连续净流入(+)/净流出(−)天数；红绿柱为近20个交易日每日主力净流入；折线为各股归一化累计涨跌（起点=0），默认观察池：三一重工 / 柳工 / 安道麦A / 中原内配 / 美的集团。</div>';
   }
 
   /* ─────────── 大盘云图渲染（双层squarified treemap → SVG） ─────────── */
+  // 估算文本宽度：CJK/全角字符按字号 1:1，ASCII 按 0.56 字号（与图表内 11px 无衬线字体实测接近）
+  function cloudTextW(s, fs) {
+    var w = 0;
+    for (var i = 0; i < s.length; i++) w += s.charCodeAt(i) > 0x2e7f ? fs : fs * 0.56;
+    return w;
+  }
+  // 在 maxW 内尽量显示完整名称：放得下就显示整名，放不下则截断并加省略号
+  // （截断至少保留 2 个字，否则「中…」这类单字标签只是噪声，完整名称交给悬浮提示）
+  function cloudFitName(name, maxW, fs) {
+    name = String(name === null || name === undefined ? "" : name);
+    if (!name || maxW <= 0) return "";
+    if (cloudTextW(name, fs) <= maxW) return name;
+    for (var n = name.length - 1; n >= 2; n--) {
+      var s = name.slice(0, n) + "…";
+      if (cloudTextW(s, fs) <= maxW) return s;
+    }
+    return "";
+  }
+  // 个股方块文字：按方块尺寸选字号（11/10/9），高度够就「名称 + 涨跌幅」两行，否则只放名称
+  function cloudStockLabel(sr, s2) {
+    var availW = sr.w - 6, availH = sr.h - 4;
+    if (availW < 14 || availH < 9) return "";
+    var sizes = [11, 10, 9], fs = 0, name = "";
+    for (var i = 0; i < sizes.length; i++) {
+      var f = sizes[i];
+      var fit = cloudFitName(s2.n, availW, f);
+      if (!fit) continue;
+      // 字号与方块尺寸匹配：大字号只给大块，小方块降字号，避免文字挤在一起
+      if (f === 11 && (sr.w < 46 || sr.h < 14)) continue;
+      if (f === 10 && (sr.w < 28 || sr.h < 11)) continue;
+      fs = f; name = fit;
+      break;
+    }
+    if (!name) return "";
+    var x = (sr.x + 3).toFixed(1);
+    var pct = fmtPct(s2.p, 1);
+    var twoLine = availH >= fs * 2 + 3;
+    var totalH = twoLine ? fs * 2.3 : fs;
+    var top = sr.y + Math.max(0, (sr.h - totalH) / 2);
+    var html = '<text x="' + x + '" y="' + (top + fs * 0.85).toFixed(1) + '" class="mkt-cloud-lb" style="font-size:' + fs +
+      'px" fill="' + pctText(s2.p) + '">' + esc(name) + "</text>";
+    if (twoLine && cloudTextW(pct, fs * 0.92) <= availW) {
+      html += '<text x="' + x + '" y="' + (top + fs * 1.95).toFixed(1) + '" class="mkt-cloud-lb2" style="font-size:' +
+        (fs * 0.92).toFixed(1) + 'px" fill="' + pctText(s2.p) + '">' + esc(pct) + "</text>";
+    }
+    return html;
+  }
   function renderCloud(data) {
     var host = $("mktCloudWrap");
     if (!host) return;
@@ -1932,10 +1979,17 @@
       var b = br.d;
       var hdH = Math.min(HEADER, br.h);
       svg += '<rect x="' + br.x.toFixed(1) + '" y="' + br.y.toFixed(1) + '" width="' + br.w.toFixed(1) + '" height="' + hdH.toFixed(1) +
-        '" fill="' + pctColor(b.pct) + '"/>';
-      if (br.w > 70) {
+        '" fill="' + pctColor(b.pct) + '"><title>' + esc(b.name) + "  涨跌 " + esc(fmtPct(b.pct)) +
+        "  成分流通市值 " + esc(fmtYi(b.totalCap, 0)) + "</title></rect>";
+      // 板块名 + 涨跌幅：名字优先完整显示，剩余宽度够再补涨跌幅，避免文字溢出方块
+      var hdAvailW = br.w - 8;
+      var hdName = cloudFitName(b.name, hdAvailW, 11);
+      if (hdName) {
+        var hdLabel = hdName;
+        var hdSuffix = " " + fmtPct(b.pct, 1);
+        if (hdName === b.name && cloudTextW(hdSuffix, 11) <= hdAvailW - cloudTextW(hdName, 11)) hdLabel += hdSuffix;
         svg += '<text x="' + (br.x + 4).toFixed(1) + '" y="' + (br.y + 11.5).toFixed(1) + '" class="mkt-cloud-hd" fill="' + pctText(b.pct) + '">' +
-          esc(b.name) + " " + esc(fmtPct(b.pct, 1)) + "</text>";
+          esc(hdLabel) + "</text>";
       }
       if (br.h > HEADER + 8 && br.w > 16) {
         var innerH = br.h - hdH;
@@ -1949,21 +2003,11 @@
           var s2 = sr.d;
           var fill = pctColor(s2.p);
           var mkt = s2.c.charAt(0) === "6" ? "sh" : (s2.c.charAt(0) === "8" || s2.c.charAt(0) === "4" ? "bj" : "sz");
+          // 每个方块都带完整股票名 + 代码 + 涨跌 + 流通市值的悬浮提示
           svg += '<rect x="' + (sr.x + 0.5).toFixed(1) + '" y="' + (sr.y + 0.5).toFixed(1) + '" width="' + Math.max(1, sr.w - 1).toFixed(1) +
             '" height="' + Math.max(1, sr.h - 1).toFixed(1) + '" fill="' + fill + '" data-code="' + esc(s2.c) + '" data-mkt="' + mkt + '"><title>' +
-            esc(s2.n) + " " + esc(s2.c) + "  涨跌 " + esc(fmtPct(s2.p)) + "  流通市值 " + esc(fmtYi(s2.cap, 0)) + "</title></rect>";
-          if (sr.w > 52 && sr.h > 32) {
-            svg += '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 13).toFixed(1) + '" class="mkt-cloud-lb" fill="' + pctText(s2.p) + '">' +
-              esc(s2.n.length > 6 ? s2.n.slice(0, 6) : s2.n) + "</text>" +
-              '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 27).toFixed(1) + '" class="mkt-cloud-lb2" fill="' + pctText(s2.p) + '">' +
-              esc(fmtPct(s2.p, 1)) + "</text>";
-          } else if (sr.w > 38 && sr.h > 17) {
-            svg += '<text x="' + (sr.x + 3).toFixed(1) + '" y="' + (sr.y + 12.5).toFixed(1) + '" class="mkt-cloud-lb" fill="' + pctText(s2.p) + '">' +
-              esc(s2.n.length > 5 ? s2.n.slice(0, 5) : s2.n) + "</text>";
-          } else if (sr.w > 26 && sr.h > 13) {
-            svg += '<text x="' + (sr.x + 2).toFixed(1) + '" y="' + (sr.y + 11).toFixed(1) + '" class="mkt-cloud-lb2" fill="' + pctText(s2.p) + '">' +
-              esc(s2.n.length > 3 ? s2.n.slice(0, 3) : s2.n) + "</text>";
-          }
+            esc(s2.n) + " " + esc(s2.c) + "  涨跌 " + esc(fmtPct(s2.p)) + "  流通市值 " + esc(fmtYi(s2.cap, 0)) + "</title></rect>" +
+            cloudStockLabel(sr, s2);
         });
       }
     });
