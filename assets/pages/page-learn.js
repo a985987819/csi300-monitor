@@ -12,7 +12,7 @@
 
   /* ═══════════ SVG 图示生成器（33 种） ═══════════ */
   var DG_W = 200, DG_H = 72;
-  var UP = "#e05a5a", DOWN = "#1fa363", TEAL = "#0d9488", BLUE = "#5C6BC0",
+  var UP = "#C45A55", DOWN = "#39846A", TEAL = "#476B9C", BLUE = "#8496B4",
       DIM = "var(--text-dim)", BORDER = "var(--t-border)";
   function dgSvg(inner, w, h) {
     return '<svg viewBox="0 0 ' + (w || DG_W) + ' ' + (h || DG_H) + '" class="learn-dg">' + (inner || "") + "</svg>";
@@ -50,7 +50,7 @@
     var bars = [40, 65, 30, 80, 55, 72, 45, 90, 60, 75, 50, 85];
     bars.forEach(function (h, i) {
       var x = i * (DG_W / bars.length) + 2;
-      var col = h > 60 ? UP : "#57c48c";
+      var col = h > 60 ? UP : "#85AD97";
       s += '<rect x="' + x.toFixed(1) + '" y="' + (DG_H - h * 0.7) + '" width="' + (DG_W / bars.length - 3).toFixed(1) + '" height="' + (h * 0.7) + '" fill="' + col + '" rx="2" opacity="0.8"/>';
     });
     return dgSvg(s);
@@ -64,10 +64,10 @@
       var y = DG_H * (1 - v / 100) * 0.9 + 3;
       pts += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
     });
-    return dgSvg('<line x1="0" y1="' + (DG_H * 0.1) + '" x2="' + DG_W + '" y2="' + (DG_H * 0.1) + '" stroke="#d8434a" stroke-dasharray="3 3" opacity="0.5"/>' +
-      '<line x1="0" y1="' + (DG_H * 0.7) + '" x2="' + DG_W + '" y2="' + (DG_H * 0.7) + '" stroke="#1fa363" stroke-dasharray="3 3" opacity="0.5"/>' +
+    return dgSvg('<line x1="0" y1="' + (DG_H * 0.1) + '" x2="' + DG_W + '" y2="' + (DG_H * 0.1) + '" stroke="#B85C5C" stroke-dasharray="3 3" opacity="0.5"/>' +
+      '<line x1="0" y1="' + (DG_H * 0.7) + '" x2="' + DG_W + '" y2="' + (DG_H * 0.7) + '" stroke="#39846A" stroke-dasharray="3 3" opacity="0.5"/>' +
       '<path d="' + pts + '" fill="none" stroke="' + BLUE + '" stroke-width="1.8"/>' +
-      txt(3, DG_H * 0.1 + 4, "70", "#d8434a") + txt(3, DG_H * 0.7 + 4, "30", "#1fa363"));
+      txt(3, DG_H * 0.1 + 4, "70", "#B85C5C") + txt(3, DG_H * 0.7 + 4, "30", "#39846A"));
   }
   /* ── 布林通道 ── */
   function dgBand() {
@@ -83,23 +83,23 @@
   /* ── 情绪仪表盘 ── */
   function dgGauge() {
     var score = 26;
-    var zones = [[0, 30, "#1fa363"], [30, 45, "#8bc48c"], [45, 60, "#c9cfda"], [60, 80, "#ec7d7d"], [80, 100, "#a51c1c"]];
+    var zones = [[0, 30, "#39846A"], [30, 45, "#85AD97"], [45, 60, "#c9cfda"], [60, 80, "#D8A49E"], [80, 100, "#9E4A46"]];
     var s = "";
     zones.forEach(function (z) {
       var x1 = z[0] / 100 * DG_W, x2 = z[1] / 100 * DG_W;
       s += '<rect x="' + x1.toFixed(1) + '" y="28" width="' + (x2 - x1).toFixed(1) + '" height="10" fill="' + z[2] + '" rx="1"/>';
     });
     var px = score / 100 * DG_W;
-    s += '<polygon points="' + px.toFixed(1) + ',28 ' + (px - 5).toFixed(1) + ',20 ' + (px + 5).toFixed(1) + ',20" fill="#26314a"/>';
-    s += txt(px.toFixed(1), 14, score, "#26314a", 12, "middle", "700");
+    s += '<polygon points="' + px.toFixed(1) + ',28 ' + (px - 5).toFixed(1) + ',20 ' + (px + 5).toFixed(1) + ',20" fill="#252A34"/>';
+    s += txt(px.toFixed(1), 14, score, "#252A34", 12, "middle", "700");
     s += txt(4, DG_H - 4, "0 弱市") + txt(DG_W - 12, DG_H - 4, "100 强势", DIM, 9, "end");
     return dgSvg(s, DG_W, DG_H + 4);
   }
   /* ── 红绿光谱条 ── */
   function dgSpectrum(label) {
-    return dgSvg('<defs><linearGradient id="sg_' + (label || "d") + '" x1="0" x2="1"><stop offset="0%" stop-color="#0c7a3e"/><stop offset="25%" stop-color="#57c48c"/><stop offset="50%" stop-color="#c9cfda"/><stop offset="75%" stop-color="#ec7d7d"/><stop offset="100%" stop-color="#a51c1c"/></linearGradient></defs>' +
+    return dgSvg('<defs><linearGradient id="sg_' + (label || "d") + '" x1="0" x2="1"><stop offset="0%" stop-color="#3E6B52"/><stop offset="25%" stop-color="#85AD97"/><stop offset="50%" stop-color="#c9cfda"/><stop offset="75%" stop-color="#D8A49E"/><stop offset="100%" stop-color="#9E4A46"/></linearGradient></defs>' +
       '<rect x="0" y="' + (DG_H / 2 - 7) + '" width="' + DG_W + '" height="14" rx="7" fill="url(#sg_' + (label || "d") + ')"/>' +
-      '<polygon points="' + DG_W / 2 + ',' + (DG_H / 2 - 12) + " " + (DG_W / 2 - 6) + ',' + (DG_H / 2 - 2) + " " + (DG_W / 2 + 6) + ',' + (DG_H / 2 - 2) + '" fill="#26314a"/>' +
+      '<polygon points="' + DG_W / 2 + ',' + (DG_H / 2 - 12) + " " + (DG_W / 2 - 6) + ',' + (DG_H / 2 - 2) + " " + (DG_W / 2 + 6) + ',' + (DG_H / 2 - 2) + '" fill="#252A34"/>' +
       txt(4, DG_H / 2 + 26, "低 / 便宜", DIM) + txt(DG_W - 4, DG_H / 2 + 26, "高 / 昂贵", DIM, 9, "end"));
   }
   /* ── 左右对照 ── */
@@ -130,9 +130,9 @@
     return dgSvg('<defs><linearGradient id="nv" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="' + TEAL + '" stop-opacity="0.15"/><stop offset="100%" stop-color="' + TEAL + '" stop-opacity="0"/></linearGradient></defs>' +
       '<path d="M0,15 C30,18 60,14 90,22 C120,28 130,20 150,25 C170,30 180,24 200,28 L200,' + DG_H + ' L0,' + DG_H + ' Z" fill="url(#nv)"/>' +
       '<path d="M0,15 C30,18 60,14 90,22 C120,28 130,20 150,25 C170,30 180,24 200,28" fill="none" stroke="' + TEAL + '" stroke-width="2"/>' +
-      '<circle cx="90" cy="22" r="3" fill="#d8434a"/>' + txt(90, 38, "峰值", "#d8434a", 9, "middle") +
-      '<line x1="90" y1="22" x2="150" y2="' + (DG_H - 8) + '" stroke="#d8434a" stroke-dasharray="3 3"/>' +
-      txt(150, DG_H - 4, "最大回撤", "#d8434a", 9, "middle"));
+      '<circle cx="90" cy="22" r="3" fill="#B85C5C"/>' + txt(90, 38, "峰值", "#B85C5C", 9, "middle") +
+      '<line x1="90" y1="22" x2="150" y2="' + (DG_H - 8) + '" stroke="#B85C5C" stroke-dasharray="3 3"/>' +
+      txt(150, DG_H - 4, "最大回撤", "#B85C5C", 9, "middle"));
   }
   /* ── 普通曲线 ── */
   function dgCurve() {
@@ -151,7 +151,7 @@
   }
   /* ── 评级阶梯 ── */
   function dgRatingLadder() {
-    var ratings = [["AAA", "#0c7a3e"], ["AA", "#1fa363"], ["A", "#57c48c"], ["BBB", "#c9cfda"], ["BB", "#ec7d7d"], ["B", "#d8434a"], ["CCC", "#a51c1c"]];
+    var ratings = [["AAA", "#3E6B52"], ["AA", "#39846A"], ["A", "#85AD97"], ["BBB", "#c9cfda"], ["BB", "#D8A49E"], ["B", "#B85C5C"], ["CCC", "#9E4A46"]];
     var s = "";
     ratings.forEach(function (r, i) {
       var y = 8 + i * 9;
@@ -182,7 +182,7 @@
       { x: 8, y: 14, h: 50, c: TEAL, t: "收入" },
       { x: 46, y: 34, h: 30, c: UP, t: "成本" },
       { x: 84, y: 44, h: 20, c: UP, t: "费用" },
-      { x: 122, y: 52, h: 12, c: "#57c48c", t: "净利" },
+      { x: 122, y: 52, h: 12, c: "#85AD97", t: "净利" },
     ];
     var s = '<line x1="0" y1="64" x2="200" y2="64" stroke="' + BORDER + '"/>';
     bars.forEach(function (b) {
@@ -204,10 +204,10 @@
   }
   /* ── 资产负债堆叠 ── */
   function dgDebtStack() {
-    return dgSvg('<rect x="10" y="16" width="180" height="26" rx="4" fill="#3b82f6" opacity="0.25"/>' +
-      '<rect x="10" y="16" width="82" height="26" rx="4" fill="#3b82f6" opacity="0.7"/>' +
-      '<rect x="10" y="50" width="180" height="14" rx="3" fill="#f59e0b" opacity="0.2"/>' +
-      '<rect x="10" y="50" width="50" height="14" rx="3" fill="#f59e0b" opacity="0.75"/>' +
+    return dgSvg('<rect x="10" y="16" width="180" height="26" rx="4" fill="#6E8CB8" opacity="0.25"/>' +
+      '<rect x="10" y="16" width="82" height="26" rx="4" fill="#6E8CB8" opacity="0.7"/>' +
+      '<rect x="10" y="50" width="180" height="14" rx="3" fill="#B98545" opacity="0.2"/>' +
+      '<rect x="10" y="50" width="50" height="14" rx="3" fill="#B98545" opacity="0.75"/>' +
       txt(52, 32, "自有权益 55%", "#fff", 9, "middle", "700") + txt(140, 32, "负债 45%", DIM, 9, "middle") +
       txt(88, 61, "其中付息债务 28%", DIM, 8.5, "middle") + txt(10, 12, "总资产", DIM, 8.5));
   }
@@ -237,7 +237,7 @@
   }
   /* ── 收入费用拆分条 ── */
   function dgExpenseSplit() {
-    var segs = [["成本", 70, TEAL], ["销售费", 30, UP], ["管理费", 22, "#f59e0b"], ["研发费", 18, BLUE], ["净利", 60, "#57c48c"]];
+    var segs = [["成本", 70, TEAL], ["销售费", 30, UP], ["管理费", 22, "#B98545"], ["研发费", 18, BLUE], ["净利", 60, "#85AD97"]];
     var s = "", x = 8;
     segs.forEach(function (g) {
       s += '<rect x="' + x + '" y="26" width="' + g[1] + '" height="18" rx="3" fill="' + g[2] + '" opacity="0.8"/>';
@@ -303,7 +303,7 @@
   /* ── 环形占比 ── */
   function dgPieRing() {
     var r = 22, cx = 52, cy = 36, C = 2 * Math.PI * r;
-    var segs = [[0.55, TEAL], [0.25, BLUE], [0.2, "#f59e0b"]];
+    var segs = [[0.55, TEAL], [0.25, BLUE], [0.2, "#B98545"]];
     var s = "";
     var off = 0;
     segs.forEach(function (g) {
@@ -312,7 +312,7 @@
     });
     s += txt(92, 28, "55%", TEAL, 9, undefined, "700") + txt(122, 28, "第一类", DIM, 8.5) +
       txt(92, 44, "25%", BLUE, 9, undefined, "700") + txt(122, 44, "第二类", DIM, 8.5) +
-      txt(92, 60, "20%", "#f59e0b", 9, undefined, "700") + txt(122, 60, "其他", DIM, 8.5);
+      txt(92, 60, "20%", "#B98545", 9, undefined, "700") + txt(122, 60, "其他", DIM, 8.5);
     return dgSvg(s, DG_W, DG_H);
   }
   /* ── 付息时间轴 ── */
@@ -320,9 +320,9 @@
     return dgSvg('<line x1="10" y1="36" x2="190" y2="36" stroke="' + BORDER + '" stroke-width="1.5"/>' +
       arrowDef("tpA", TEAL) + '<line x1="186" y1="36" x2="192" y2="36" stroke="' + TEAL + '" marker-end="url(#tpA)"/>' +
       [[30, "付息日"], [90, "计息中"], [150, "下一付息日"]].map(function (p, i) {
-        return '<circle cx="' + p[0] + '" cy="36" r="5" fill="' + (i === 1 ? "#f59e0b" : TEAL) + '"/>' + txt(p[0], 52, p[1], DIM, 8.5, "middle");
+        return '<circle cx="' + p[0] + '" cy="36" r="5" fill="' + (i === 1 ? "#B98545" : TEAL) + '"/>' + txt(p[0], 52, p[1], DIM, 8.5, "middle");
       }).join("") +
-      txt(90, 22, "应计利息逐日累积", "#f59e0b", 9, "middle", "600"));
+      txt(90, 22, "应计利息逐日累积", "#B98545", 9, "middle", "600"));
   }
   /* ── 折溢价双柱 ── */
   function dgPriceGap() {
@@ -343,7 +343,7 @@
   }
   /* ── 公式卡（PD×LGD×EAD） ── */
   function dgFormulaCard() {
-    var boxes = [["PD", TEAL], ["LGD", BLUE], ["EAD", "#f59e0b"]];
+    var boxes = [["PD", TEAL], ["LGD", BLUE], ["EAD", "#B98545"]];
     var s = "", x = 8;
     boxes.forEach(function (b, i) {
       s += '<rect x="' + x + '" y="22" width="34" height="24" rx="5" fill="' + b[1] + '" opacity="0.18"/><rect x="' + x + '" y="22" width="34" height="24" rx="5" fill="none" stroke="' + b[1] + '" stroke-width="1.2"/>' +

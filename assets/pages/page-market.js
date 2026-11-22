@@ -47,7 +47,7 @@
     { secid: "1.560710", code: "560710", name: "船舶ETF", theme: "航海装备" },
   ];
   var STOCK_KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59";   // 标准规范全序（同 KLINE_FIELDS2）
-  var STOCK_LINE = ["#0d9488", "#D81B60", "#F9A825", "#5C6BC0", "#EF6C00"];
+  var STOCK_LINE = ["#476B9C", "#B85C5C", "#B98545", "#8496B4", "#4D896A"];
 
   var CLIST_FIELDS = "f12,f14,f3,f7,f6,f62,f66,f72,f184,f109,f160,f24,f25,f164,f165,f128,f140,f136,f124";
   var KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59";   // 标准规范全序：日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅
@@ -421,22 +421,22 @@
   function pctColor(p) {
     if (p === null || p === undefined || isNaN(p)) return "#c9cfda";   // 灰：停牌/平盘/无数据
     if (p > 0) {
-      if (p >= 7) return "#a51c1c";
-      if (p >= 3) return "#d8434a";
-      if (p >= 1) return "#ec7d7d";
-      return "#f6baba";
+      if (p >= 7) return "#9E4A46";
+      if (p >= 3) return "#B85C5C";
+      if (p >= 1) return "#D8A49E";
+      return "#E8C0BC";
     }
     if (p < 0) {
-      if (p <= -7) return "#0c7a3e";
-      if (p <= -3) return "#1fa363";
-      if (p <= -1) return "#5cc08d";
-      return "#aedcc0";
+      if (p <= -7) return "#3E6B52";
+      if (p <= -3) return "#39846A";
+      if (p <= -1) return "#85AD97";
+      return "#BFD8CB";
     }
     return "#c9cfda";
   }
   function pctText(p) {
-    if (p === null || p === undefined || isNaN(p)) return "#26314a";
-    return Math.abs(p) >= 3 ? "#ffffff" : "#26314a";
+    if (p === null || p === undefined || isNaN(p)) return "#252A34";
+    return Math.abs(p) >= 3 ? "#ffffff" : "#252A34";
   }
   // squarified treemap：items 按值降序，v 已缩放为目标面积
   function treemapSquarify(items, x, y, w, h, out) {
@@ -2438,7 +2438,7 @@
       var y = pad + (H - 2 * pad) * (1 - (closes[i] - mn) / Math.max(1e-9, mx - mn));
       pts.push(x.toFixed(1) + "," + y.toFixed(1));
     }
-    var color = (w20 !== null && w20 < 0) ? "#1fa363" : "#e05a5a";
+    var color = (w20 !== null && w20 < 0) ? "#39846A" : "#C45A55";
     return '<svg width="' + W + '" height="' + H + '" style="vertical-align:middle"><polyline points="' +
       pts.join(" ") + '" fill="none" stroke="' + color + '" stroke-width="1.6"/></svg>';
   }
@@ -2464,7 +2464,7 @@
       var k = ohlc[i];
       if (k.c === null || isNaN(k.c)) continue;
       var up = k.o !== null && !isNaN(k.o) ? k.c >= k.o : (i > 0 && ohlc[i - 1].c !== null ? k.c >= ohlc[i - 1].c : true);
-      var col = up ? "#e05a5a" : "#1fa363";
+      var col = up ? "#C45A55" : "#39846A";
       var xc = (i * bw + bw / 2).toFixed(1);
       var yH = Y(k.h !== null && !isNaN(k.h) ? k.h : k.c).toFixed(1);
       var yL = Y(k.l !== null && !isNaN(k.l) ? k.l : k.c).toFixed(1);
@@ -2522,7 +2522,7 @@
         if (v === null || v === undefined || isNaN(v)) return;
         var bh = Math.max(1, Math.abs(v) / mx * (ih / 2));
         var bx = gx + (groupW - wins.length * barW - (wins.length - 1) * 4) / 2 + wi * (barW + 4);
-        var col = v > 0 ? "#e05a5a" : "#1fa363";
+        var col = v > 0 ? "#C45A55" : "#39846A";
         var by = v > 0 ? Y(v) : Y(0);
         g += '<rect x="' + bx.toFixed(1) + '" y="' + by.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + bh.toFixed(1) +
           '" fill="' + col + '" rx="2"><title>' + esc(r.ix.name) + " " + wd.label + " " + esc(fmtPct(v)) + "</title></rect>";
@@ -2549,7 +2549,7 @@
     var temp = Math.round(upPct * 0.45 + ztRatio * 0.25 + quality * 0.15 + active * 0.15);
     temp = Math.max(0, Math.min(100, temp));
     var zone = temp < 20 ? "冰点" : temp < 40 ? "降温" : temp < 60 ? "中性" : temp < 80 ? "升温" : "过热";
-    var zoneColor = temp < 20 ? "#1fa363" : temp < 40 ? "#5cc08d" : temp < 60 ? "#8a96b0" : temp < 80 ? "#ec7d7d" : "#a51c1c";
+    var zoneColor = temp < 20 ? "#39846A" : temp < 40 ? "#85AD97" : temp < 60 ? "#8a96b0" : temp < 80 ? "#D8A49E" : "#9E4A46";
     var tip = "温度=板块上涨占比×45% + 涨停相对强度×25% + 封板质量(100-炸板率)×15% + 连板活跃×15%；" +
       "当前因子：广度 " + upPct.toFixed(0) + "% · 涨停/跌停强度 " + ztRatio.toFixed(0) + "% · 封板质量 " + quality.toFixed(0) + " · 连板活跃 " + active.toFixed(0);
     var html = '<div class="mkt-gauge" title="' + esc(tip) + '">' +
@@ -2896,8 +2896,8 @@
       var v = series[j];
       var h = Math.max(1, Math.abs(v) / max * (mid - 2));
       var x = (j * bw + 0.5).toFixed(1), w = Math.max(1, bw - 1.2).toFixed(1);
-      if (v >= 0) html += '<rect x="' + x + '" y="' + (mid - h).toFixed(1) + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#e05a5a"/>';
-      else html += '<rect x="' + x + '" y="' + mid + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#1fa363"/>';
+      if (v >= 0) html += '<rect x="' + x + '" y="' + (mid - h).toFixed(1) + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#C45A55"/>';
+      else html += '<rect x="' + x + '" y="' + mid + '" width="' + w + '" height="' + h.toFixed(1) + '" fill="#39846A"/>';
     }
     return html + "</svg>";
   }
@@ -3165,7 +3165,7 @@
     cols.forEach(function (col) {
       col.nodes.forEach(function (nd) {
         var v = nd.b[col.field];
-        var color = v > 0 ? "#e05a5a" : (v < 0 ? "#1fa363" : "#8a96b0");
+        var color = v > 0 ? "#C45A55" : (v < 0 ? "#39846A" : "#8a96b0");
         svg += '<rect x="' + nd.x + '" y="' + nd.y + '" width="4" height="' + nd.h + '" rx="2" fill="' + color + '"/>' +
           '<text class="snk-node" x="' + (nd.x + 10) + '" y="' + (nd.y + 8) + '">' +
           "<tspan>" + esc(nd.b.name) + "</tspan>" +

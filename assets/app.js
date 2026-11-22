@@ -328,9 +328,10 @@
   var pop = $("filterPop");
 
   /* ══════════ 2.5 公司主题色（确定性哈希 → 品牌色板） ══════════ */
-  var CO_PALETTE = ["#D81B60", "#F4511E", "#F9A825", "#8D6E63", "#7E57C2", "#00897B",
-    "#EC407A", "#5C6BC0", "#FF7043", "#26A69A", "#AB47BC", "#827717",
-    "#EF6C00", "#00ACC1", "#AD1457", "#9575CD"];
+  /* 公司主题色：低饱和编辑风格色板（哈希映射逻辑不变） */
+  var CO_PALETTE = ["#5E7CA0", "#B98545", "#4D896A", "#B85C5C", "#7C8BB0", "#6B8E9E",
+    "#8E7C9E", "#8F845C", "#946B62", "#5C7E8C", "#A89B62", "#7E6B5C",
+    "#8C9464", "#6E9AA3", "#9C8AA8", "#A0705E"];
   var coColorCache = {};
   // 公司拼音首字母表（按实际数据整理，搜索用）
   var CO_PINYIN = {
@@ -1714,7 +1715,7 @@
       d += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
     }
     var up = pts[pts.length - 1][1] >= pts[0][1];
-    var col = up ? "#0ba14e" : "#d8434a";
+    var col = up ? "#0ba14e" : "#B85C5C";
     return '<svg class="sparksvg" width="' + W + '" height="' + H + '"><path d="' + d +
       '" fill="none" stroke="' + col + '" stroke-width="1.4"/></svg>';
   }
@@ -2067,15 +2068,15 @@
       }
       return d;
     }
-    g += '<path d="' + pathOf(series) + '" fill="none" stroke="#0d9488" stroke-width="2"/>';
+    g += '<path d="' + pathOf(series) + '" fill="none" stroke="#476B9C" stroke-width="2"/>';
     if (bench) {
       g += '<path d="' + pathOf(bench) + '" fill="none" stroke="#9aa8c0" stroke-width="1.6" stroke-dasharray="5 4"/>';
     }
     var fe = series[series.length - 1][1];
     g += '<circle cx="' + X(series[series.length - 1][0]).toFixed(1) + '" cy="' + Y(fe).toFixed(1) +
-      '" r="3" fill="#0d9488"/>';
+      '" r="3" fill="#476B9C"/>';
     g += '<text x="' + Math.min(X(series[series.length - 1][0]) + 6, W - R - 4) + '" y="' + Y(fe).toFixed(1) +
-      '" class="tick" fill="#0d9488">' + (fe >= 0 ? "+" : "") + fe.toFixed(1) + "%</text>";
+      '" class="tick" fill="#476B9C">' + (fe >= 0 ? "+" : "") + fe.toFixed(1) + "%</text>";
     if (bench) {
       var be = bench[bench.length - 1][1];
       g += '<text x="' + Math.min(X(bench[bench.length - 1][0]) + 6, W - R - 4) + '" y="' + (Y(be) - 8).toFixed(1) +
@@ -2157,7 +2158,7 @@
 
   /* ══════════ 10.6 基金对比 ══════════ */
   var cmpDays = 365;
-  var CMP_LINE = ["#0d9488", "#D81B60", "#F9A825", "#5C6BC0"];
+  var CMP_LINE = ["#476B9C", "#B85C5C", "#B98545", "#8496B4"];
   function cmpRecords() {
     return cmpSel.map(function (code) {
       var f = funds.find(function (x) { return x.code === code; }) || null;
@@ -2570,7 +2571,7 @@
       }
       $("loadStage").textContent = "获取" + tab.label + "数据失败：" + e.message + "（请确认 server.py 已启动）";
       $("loadFill").style.width = "100%";
-      $("loadFill").style.background = "#d8434a";
+      $("loadFill").style.background = "#B85C5C";
       progressCb = null;
       $("btnPause").hidden = true;
       loadingTabKey = null;
@@ -2815,7 +2816,7 @@
           }
           $("loadStage").textContent = "无法获取数据：请先运行 python server.py（本地中继）";
           $("loadFill").style.width = "100%";
-          $("loadFill").style.background = "#d8434a";
+          $("loadFill").style.background = "#B85C5C";
           progressCb = null;
         });
         return;
