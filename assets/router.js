@@ -14,6 +14,8 @@
                 scripts: ["assets/pages/page-fundtable.js", "assets/app.js"], params: { group: "fav" } },
     market:   { nav: "market",   title: "市场",     page: "market",   rootId: "page-market",
                 scripts: ["assets/pages/page-market.js"], params: {} },
+    company:  { nav: "company",  title: "深挖公司", page: "company",  rootId: "page-company",
+                scripts: ["assets/pages/page-company.js"], params: {} },
     learn:    { nav: "learn",    title: "学习",     page: "learn",    rootId: "page-learn",
                 scripts: ["assets/learn-data.js", "assets/pages/page-learn.js"], params: {} },
     settings: { nav: "settings", title: "设置",     page: "settings", rootId: "page-settings",
