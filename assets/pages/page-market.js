@@ -3207,33 +3207,51 @@
     loadMarket(false);
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
-    var pill = document.querySelector('.nav-pill[data-tab="market"]');
-    if (!pill) return;
-    pill.addEventListener("click", function () { onActivate(); });
-    $("mktRefresh").addEventListener("click", function () { loadMarket(true); });
-    if (pill.classList.contains("active")) onActivate();
-    // 数据源切换：持久化 + 各源独立缓存/快照，切换即重取（先打回骨架屏，给出明确加载态）
-    var provBox = $("mktProv");
-    if (provBox) {
-      provBox.addEventListener("click", function (ev) {
-        var b = ev.target.closest("button[data-p]");
-        if (!b || b.classList.contains("on")) return;
-        var p = b.getAttribute("data-p");
-        if (!PROVIDERS[p]) return;
-        activeProvider = p;
-        try { localStorage.setItem("hs300.mkt.provider", activeProvider); } catch (e) {}
-        provBox.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
-        // 切换一律走新代际：旧源的加载结果作废，命中该源缓存/快照则秒切，否则显示骨架屏并重取
-        loadMarket(false, true);
-      });
-      provBox.querySelectorAll("button").forEach(function (x) {
-        x.classList.toggle("on", x.getAttribute("data-p") === activeProvider);
-      });
-    }
-    // 收盘后自动切换当日数据：每分钟检查（可见标签页才请求），当日仅尝试一次
-    setInterval(autoTransition, 60000);
-  });
+  /* ══════════ 路由组件注册（assets/router.js 懒加载本文件后调用 mount/activate） ══════════ */
+  window.AppPages = window.AppPages || {};
+  window.AppPages.market = {
+    mount: function (root) {
+      root.innerHTML =
+        '<section class="mkt-head">' +
+          '<div class="mkt-title-row">' +
+            '<b class="mkt-title">市场全景</b>' +
+            '<div class="mkt-prov" id="mktProv" title="切换数据源（不同源的能力边界见各模块提示）">' +
+              '<button data-p="em" class="on">东方财富</button>' +
+              '<button data-p="sina">新浪财经</button>' +
+              '<button data-p="tx">腾讯行情</button>' +
+            '</div>' +
+            '<span class="mode-chip" id="mktChip"><i class="chip-dot"></i><span id="mktChipText">准备加载…</span></span>' +
+            '<span class="mkt-rule" id="mktRule"></span>' +
+            '<button class="btn btn-ghost mkt-refresh" id="mktRefresh" title="重新拉取市场数据">⟳ 刷新</button>' +
+          '</div>' +
+          '<p class="mkt-note">开盘期间自动统计<b>上一交易日</b>收盘数据，收盘后统计<b>当日</b>；板块资金流 / 题材振幅 / 桑基热点均来自公开接口，按基准日本地缓存，当日重访秒开。</p>' +
+        '</section>' +
+        '<div class="mkt-body" id="mktBody"><!-- 市场模块渲染 --></div>';
+      $("mktRefresh").addEventListener("click", function () { loadMarket(true); });
+      // 数据源切换：持久化 + 各源独立缓存/快照，切换即重取（先打回骨架屏，给出明确加载态）
+      var provBox = $("mktProv");
+      if (provBox) {
+        provBox.addEventListener("click", function (ev) {
+          var b = ev.target.closest("button[data-p]");
+          if (!b || b.classList.contains("on")) return;
+          var p = b.getAttribute("data-p");
+          if (!PROVIDERS[p]) return;
+          activeProvider = p;
+          try { localStorage.setItem("hs300.mkt.provider", activeProvider); } catch (e) {}
+          provBox.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+          // 切换一律走新代际：旧源的加载结果作废，命中该源缓存/快照则秒切，否则显示骨架屏并重取
+          loadMarket(false, true);
+        });
+        provBox.querySelectorAll("button").forEach(function (x) {
+          x.classList.toggle("on", x.getAttribute("data-p") === activeProvider);
+        });
+      }
+      // 收盘后自动切换当日数据：每分钟检查（可见标签页才请求），当日仅尝试一次
+      setInterval(autoTransition, 60000);
+    },
+    activate: function () { onActivate(); },
+    deactivate: function () {}
+  };
 
   // 调试钩子：控制台可注入 mock 数据验证渲染管线（window.__mktDebug.renderAll(data)）
   window.__mktDebug = { renderAll: renderAll, ensureSkeleton: ensureSkeleton, approxBase: approxBase, afterClose: afterClose, loadMarket: loadMarket, fetchEvents: fetchEvents, fetchJsonp: fetchJsonp, fetchBoardConstituents: fetchBoardConstituents, quantHeat: quantHeat, quantStage: quantStage, quantSectorStrength: quantSectorStrength };

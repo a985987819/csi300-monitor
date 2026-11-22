@@ -322,6 +322,8 @@
   var CMP_MAX = 4;
 
   var $ = function (id) { return document.getElementById(id); };
+  /* 页面骨架由路由懒加载注入（assets/pages/page-fundtable.js 先于本脚本执行），
+     引擎脚本加载时 DOM 已就绪；此处仍走懒绑定以兼容直接打开的异常场景 */
   var tbody = $("tbody"), thead = $("thead"), scrollBox = $("tableScroll");
   var pop = $("filterPop");
 
@@ -2376,95 +2378,19 @@
     return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
   }
 
-  /* ══════════ 12. 时钟 / 页签 / 设置 ══════════ */
-  function tickClock() {
-    var now = new Date();
-    var parts = new Intl.DateTimeFormat("zh-CN", {
-      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
-      day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-    }).formatToParts(now);
-    var map = {};
-    parts.forEach(function (p) { map[p.type] = p.value; });
-    $("serverTime").textContent = map.year + "-" + map.month + "-" + map.day + " " + map.hour + ":" + map.minute + ":" + map.second;
-    var wd = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", weekday: "short" }).format(now);
-    var mins = (+map.hour) * 60 + (+map.minute);
-    var open = wd !== "Sat" && wd !== "Sun" && ((mins >= 570 && mins <= 690) || (mins >= 780 && mins <= 900));
-    $("marketStatus").textContent = open ? "开市" : "休市";
-  }
-  function initTabs() {
-    $("topnav").addEventListener("click", function (ev) {
-      var btn = ev.target.closest(".nav-pill");
-      if (!btn) return;
-      document.querySelectorAll(".nav-pill").forEach(function (b) { b.classList.remove("active"); });
-      btn.classList.add("active");
-      var tab = btn.getAttribute("data-tab");
-      document.querySelectorAll(".page").forEach(function (p) { p.classList.remove("active"); });
-      // 宽基 / 债基 共用同一个筛选表格页，仅切换页签分组
-      if (tab === "broad" || tab === "bond" || tab === "fav") {
-        $("page-broad").classList.add("active");
-        $("pageFoot").hidden = false;
-        var group = TAB_GROUPS.find(function (g) { return g.key === tab; });
-        if (group !== activeGroup || !tabData[groupTab[tab] || group.tabs[0].key]) {
-          activeGroup = group;
-          renderIdxTabs();
-          switchTab(groupTab[tab] || group.tabs[0].key, false);
-        }
-        return;
-      }
-      var page = $("page-" + tab);
-      if (page) page.classList.add("active");
-      $("pageFoot").hidden = tab !== "broad";
-    });
-  }
-  function applyTheme(t) {
-    document.documentElement.classList.toggle("dark", t === "dark");
-    var b = $("btnTheme");
-    if (b) b.textContent = (t === "dark") ? "☀️" : "🌙";
-    var r = $("optDark");
-    if (r) r.checked = (t === "dark");
-  }
-  function initSettings() {
+  /* ══════════ 12. 时钟 / 页签 / 设置（时钟与主题已上移至 assets/core/shell.js） ══════════ */
+  /* 顶部导航已由路由接管（assets/router.js）；宽基/债基/自选共用本筛选引擎，
+     分组切换由 FundEngine.activateRoute 完成（见文件末尾桥接）。 */
+  function applySettingsState() {
+    /* 设置页组件（assets/pages/page-settings.js）负责输入绑定与持久化；
+       引擎只消费设置状态，并在收到变更事件时重渲染。 */
     var st = {};
     try { st = JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}"); } catch (e) { st = {}; }
     if (st.useCache === undefined) st.useCache = true;
     if (st.good === undefined) st.good = true;
-    if (st.theme === undefined) st.theme = "light";
     goodOn = !!st.good;
-    applyTheme(st.theme);
-    var dense = $("optDense"), colorize = $("optColor"), useCache = $("optCache"), good = $("optGood"), dark = $("optDark");
-    dense.checked = !!st.dense;
-    colorize.checked = !!st.colorize;
-    useCache.checked = !!st.useCache;
-    good.checked = goodOn;
     document.body.classList.toggle("dense", !!st.dense);
     document.body.classList.toggle("colorize", !!st.colorize);
-    function persist() {
-      try {
-        localStorage.setItem(LS_SETTINGS, JSON.stringify({
-          dense: dense.checked, colorize: colorize.checked, useCache: useCache.checked,
-          good: good.checked, theme: $("optDark").checked ? "dark" : "light",
-        }));
-      } catch (e) {}
-    }
-    dense.addEventListener("change", function () {
-      document.body.classList.toggle("dense", dense.checked); persist(); measuredRowH = 0; renderAll({ resetScroll: true });
-    });
-    colorize.addEventListener("change", function () {
-      document.body.classList.toggle("colorize", colorize.checked); persist(); renderAll();
-    });
-    good.addEventListener("change", function () {
-      goodOn = good.checked; persist(); renderAll();
-    });
-    dark.addEventListener("change", function () {
-      applyTheme(dark.checked ? "dark" : "light"); persist();
-    });
-    $("btnTheme").addEventListener("click", function () {
-      var t = document.documentElement.classList.contains("dark") ? "light" : "dark";
-      applyTheme(t);
-      persist();
-    });
-    useCache.addEventListener("change", persist);
-    return st;
   }
   function setModeChip() {
     var chip = $("modeChip");
@@ -2676,16 +2602,29 @@
       !!(window.__FUND_DATA__ && window.__FUND_DATA__.funds && window.__FUND_DATA__.funds.length);
   }
 
-  function boot() {
+  function defaultTabForGroup(groupKey) {
+    var group = TAB_GROUPS.find(function (g) { return g.key === groupKey; }) || TAB_GROUPS[0];
+    return groupTab[group.key] || group.tabs[0].key;
+  }
+  function boot(groupKey) {
+    /* 先按路由分组设定 activeGroup/activeTab：快照模式（无中继）不经过 switchTab，
+       applyView 也能渲染出正确分组 */
+    var group0 = TAB_GROUPS.find(function (g) { return g.key === groupKey; }) || TAB_GROUPS[0];
+    activeGroup = group0;
+    activeTab = group0.tabs.find(function (t) { return t.key === defaultTabForGroup(group0.key); }) || group0.tabs[0];
     loadVisible();
     loadFav();
     loadSync();
     updateFavBadge();
     renderChecks();
     initPop();
-    tickClock();
-    setInterval(tickClock, 1000);
-    var st = initSettings();
+    applySettingsState();
+    /* 设置页组件修改设置后广播 hs300:settings，引擎刷新状态并重渲染 */
+    document.addEventListener("hs300:settings", function () {
+      applySettingsState();
+      measuredRowH = 0;
+      renderAll({ resetScroll: true });
+    });
 
     var kwDebounced = debounce(function () { renderAll({ resetScroll: true }); }, 130);
     $("kwInput").addEventListener("input", function () {
@@ -2823,7 +2762,6 @@
     window.addEventListener("resize", debounce(function () {
       renderHeader(); pendingAnim = false; updateVirtualWindow(true);
     }, 200));
-    initTabs();
     $("infoBubble").innerHTML =
       "<b>数据说明（实时模式）</b><br>" +
       "· 数据实时调取天天基金网公开接口，本地缓存 6 小时，可点「⟳ 刷新数据」强制更新<br>" +
@@ -2856,7 +2794,7 @@
       return loadAllFunds().then(function () {
         renderIdxTabs();
         if (PROXY) {
-          switchTab(INDEX_TABS[0].key, false);
+          switchTab(defaultTabForGroup(groupKey), false);
           return;
         }
         return Promise.reject(new Error("no-proxy"));
@@ -2901,34 +2839,24 @@
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () {
-      try { boot(); } catch (e) { window.__bootErr = e.stack || String(e); }
-    });
-  } else {
-    try { boot(); } catch (e) { window.__bootErr = e.stack || String(e); }
-  }
-
-  /* ── 顶栏滚动感知：滚动后加深玻璃底色，保证下方内容透过时文字对比度 ── */
-  (function () {
-    var bar = document.querySelector(".topbar");
-    if (!bar) return;
-    var ticking = false;
-    function update() {
-      ticking = false;
-      var y = window.scrollY || window.pageYOffset || 0;
-      var page = document.querySelector(".page.active");
-      if (page) y += page.scrollTop || 0;
-      bar.classList.toggle("scrolled", y > 8);
+  /* ══════════ 路由桥接：基金筛选组件服务于 #/broad #/bond #/fav 三条路由 ══════════
+     首次激活才 boot（按路由分组初始化）；后续激活只做分组切换（已挂载页面保留状态）。 */
+  var engineBooted = false;
+  window.FundEngine = {
+    activateRoute: function (groupKey) {
+      $("pageFoot").hidden = groupKey !== "broad";
+      if (!engineBooted) {
+        engineBooted = true;
+        try { boot(groupKey); } catch (e) { window.__bootErr = e.stack || String(e); }
+        return;
+      }
+      var group = TAB_GROUPS.find(function (g) { return g.key === groupKey; });
+      if (!group) return;
+      if (group !== activeGroup || !tabData[groupTab[groupKey] || group.tabs[0].key]) {
+        activeGroup = group;
+        renderIdxTabs();
+        switchTab(groupTab[groupKey] || group.tabs[0].key, false);
+      }
     }
-    function queue() {
-      if (!ticking) { ticking = true; requestAnimationFrame(update); }
-    }
-    window.addEventListener("scroll", queue, { passive: true });
-    /* 页面容器自身滚动（如 #page-learn）也纳入；capture 捕获所有子滚动源 */
-    document.addEventListener("scroll", function (ev) {
-      if (ev.target && ev.target.nodeType === 1 && ev.target.classList.contains("page")) queue();
-    }, { capture: true, passive: true });
-    update();
-  })();
+  };
 })();

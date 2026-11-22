@@ -510,39 +510,56 @@
     });
   }
 
-  /* ═══════════ 初始化 ═══════════ */
-  document.addEventListener("DOMContentLoaded", function () {
-    var pill = document.querySelector('.nav-pill[data-tab="learn"]');
-    if (!pill) return;
-    pill.addEventListener("click", function () {
+  /* ═══════════ 路由组件注册（assets/router.js 懒加载 learn-data.js + 本文件后调用） ═══════════ */
+  window.AppPages = window.AppPages || {};
+  window.AppPages.learn = {
+    mount: function (root) {
+      root.innerHTML =
+        '<section class="learn-head">' +
+          '<div class="mkt-title-row">' +
+            '<b class="mkt-title">指标百科</b>' +
+            '<input id="learnSearch" type="text" autocomplete="off" spellcheck="false"' +
+            ' placeholder="搜索指标（名称 / 英文 / 拼音首字母）" class="learn-search">' +
+          '</div>' +
+        '</section>' +
+        '<div class="learn-body" id="learnBody"><!-- 指标行由本组件渲染 --></div>' +
+        '<div class="learn-nav-float" id="learnNavFloat">' +
+          '<button data-cat="stock" class="on">股市</button>' +
+          '<button data-cat="fund">基金</button>' +
+          '<button data-cat="bond">债市</button>' +
+        '</div>';
+      var searchEl = $("learnSearch");
+      if (searchEl) {
+        var tId = null;
+        searchEl.addEventListener("input", function () {
+          clearTimeout(tId);
+          var v = this.value.trim();
+          tId = setTimeout(function () { searchTerm = v; render(); }, 150);
+        });
+      }
+      var navFloat = $("learnNavFloat");
+      if (navFloat) {
+        navFloat.addEventListener("click", function (ev) {
+          var b = ev.target.closest("button[data-cat]");
+          if (!b || b.classList.contains("on")) return;
+          activeCat = b.getAttribute("data-cat");
+          navFloat.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
+          searchTerm = "";
+          var se = $("learnSearch");
+          if (se) se.value = "";
+          render();
+        });
+        navFloat.querySelectorAll("button").forEach(function (x) {
+          x.classList.toggle("on", x.getAttribute("data-cat") === activeCat);
+        });
+      }
+      bindRows();
+      render();
+    },
+    activate: function () {
+      /* 已挂载时（分类切换回来）保持原状；首次渲染在 mount 完成 */
       if (!$("learnBody") || !$("learnBody").innerHTML.trim()) render();
-    });
-    var searchEl = $("learnSearch");
-    if (searchEl) {
-      var tId = null;
-      searchEl.addEventListener("input", function () {
-        clearTimeout(tId);
-        var v = this.value.trim();
-        tId = setTimeout(function () { searchTerm = v; render(); }, 150);
-      });
-    }
-    var navFloat = $("learnNavFloat");
-    if (navFloat) {
-      navFloat.addEventListener("click", function (ev) {
-        var b = ev.target.closest("button[data-cat]");
-        if (!b || b.classList.contains("on")) return;
-        activeCat = b.getAttribute("data-cat");
-        navFloat.querySelectorAll("button").forEach(function (x) { x.classList.toggle("on", x === b); });
-        searchTerm = "";
-        var se = $("learnSearch");
-        if (se) se.value = "";
-        render();
-      });
-      navFloat.querySelectorAll("button").forEach(function (x) {
-        x.classList.toggle("on", x.getAttribute("data-cat") === activeCat);
-      });
-    }
-    bindRows();
-    render();
-  });
+    },
+    deactivate: function () {}
+  };
 })();

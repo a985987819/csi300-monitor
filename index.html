@@ -16,7 +16,8 @@ try {
 </head>
 <body>
 
-<!-- ═══════════ 顶部导航栏 ═══════════ -->
+<!-- ═══════════ 应用壳：顶部导航（毛玻璃）+ 页面挂载点；各页面组件按路由懒加载 ═══════════
+     路由：#/broad 宽基 · #/bond 债基 · #/fav 我的自选 · #/market 市场 · #/learn 学习 · #/settings 设置 -->
 <header class="topbar">
   <div class="topbar-left">
     <h1 class="brand">流通基金概览</h1>
@@ -34,119 +35,12 @@ try {
   <button class="theme-btn" id="btnTheme" title="切换浅色 / 深色主题">🌙</button>
 </header>
 
-<!-- ═══════════ 主体：宽基页 ═══════════ -->
-<main id="page-broad" class="page active">
-  <section class="filter-bar">
-    <label class="kw-label" for="kwInput">筛选</label>
-    <input id="kwInput" type="text" autocomplete="off" spellcheck="false"
-           placeholder="简称 / 代码 / 经理 / 管理人 / 拼音缩写">
-    <div class="meta-line">
-      <b class="meta-title" id="metaTitle">宽基 - 沪深300指数基金</b>
-      <span class="meta-dim">&nbsp;共 <span id="countTotal">-</span> 只 · 来源：天天基金网</span>
-      <span class="mode-chip" id="modeChip"><i class="chip-dot"></i><span id="modeText">检测数据源…</span></span>
-      <span class="info-tip" tabindex="0">ⓘ
-        <span class="info-bubble" id="infoBubble"></span>
-      </span>
-      <a class="clear-filter" id="clearFilter">× 清空筛选</a>
-      <span class="meta-filtered" id="filteredNote"></span>
-    </div>
-    <div class="export-group">
-      <button class="btn btn-ghost" id="btnPause" hidden>⏸ 暂停获取</button>
-      <button class="btn btn-ghost" id="btnRefresh" title="重新从公开接口拉取最新数据">⟳ 刷新数据</button>
-      <button class="btn btn-green" id="btnExportPage">⟋ 导出当前页</button>
-      <button class="btn btn-white" id="btnExportExcel">⭳ 导出 Excel</button>
-    </div>
-  </section>
+<!-- 页面组件挂载点：路由按需注入 <main class="page"> 并切换 .active -->
+<main id="app" class="app-mount"></main>
 
-  <div class="tabs-row">
-    <nav class="idx-tabs" id="idxTabs"><!-- 指数子标签由 JS 生成 --></nav>
-    <span class="tabs-sep"></span>
-    <div class="co-pick" id="coPick">
-      <button type="button" class="co-pick-btn" id="coBtn">
-        <span class="co-dot cur"></span>公司：全部<span class="caret">▾</span>
-      </button>
-      <div class="co-pop" id="coPop" hidden>
-        <input id="coSearch" type="text" autocomplete="off" spellcheck="false"
-               placeholder="公司名 / 拼音首字母（如 hx、yfd）">
-        <div class="co-list" id="coList"></div>
-      </div>
-    </div>
-  </div>
+<!-- ═══════════ 壳级全局浮层（各页面组件共享） ═══════════ -->
 
-  <div class="cols-bar">
-    <button type="button" class="cols-toggle" id="btnCols" title="选择表格显示的列">
-      ☰ 列设置 <span class="cols-count" id="colsCount"></span><span class="caret">▾</span>
-    </button>
-    <span class="cols-hint">表头 ? 可查看指标说明 · 漏斗可按列筛选</span>
-    <div class="cols-pop" id="colsPop" hidden>
-      <section class="col-checks" id="colChecks"><!-- 分组列勾选由 JS 生成 --></section>
-    </div>
-  </div>
-
-  <section class="table-wrap" id="tableWrap">
-    <div class="table-scroll" id="tableScroll">
-      <table class="fund-table" id="fundTable">
-        <thead id="thead"><!-- JS --></thead>
-        <tbody id="tbody"><!-- JS --></tbody>
-      </table>
-      <div class="empty-tip" id="emptyTip" hidden>无匹配基金</div>
-    </div>
-  </section>
-
-  <footer class="page-foot" id="pageFoot">数据来源：天天基金网（fund.eastmoney.com）公开数据 · 实时获取 · 仅用于个人研究筛选，不构成投资建议</footer>
-</main>
-
-<!-- ═══════════ 市场页 ═══════════ -->
-<main class="page" id="page-market">
-  <section class="mkt-head">
-    <div class="mkt-title-row">
-      <b class="mkt-title">市场全景</b>
-      <div class="mkt-prov" id="mktProv" title="切换数据源（不同源的能力边界见各模块提示）">
-        <button data-p="em" class="on">东方财富</button>
-        <button data-p="sina">新浪财经</button>
-        <button data-p="tx">腾讯行情</button>
-      </div>
-      <span class="mode-chip" id="mktChip"><i class="chip-dot"></i><span id="mktChipText">准备加载…</span></span>
-      <span class="mkt-rule" id="mktRule"></span>
-      <button class="btn btn-ghost mkt-refresh" id="mktRefresh" title="重新拉取市场数据">⟳ 刷新</button>
-    </div>
-    <p class="mkt-note">开盘期间自动统计<b>上一交易日</b>收盘数据，收盘后统计<b>当日</b>；板块资金流 / 题材振幅 / 桑基热点均来自东方财富公开接口，按基准日本地缓存，当日重访秒开。</p>
-  </section>
-  <div class="mkt-body" id="mktBody"><!-- 市场模块由 assets/market.js 渲染 --></div>
-</main>
-
-<!-- ═══════════ 学习页 ═══════════ -->
-<main class="page" id="page-learn">
-  <section class="learn-head">
-    <div class="mkt-title-row">
-      <b class="mkt-title">指标百科</b>
-      <input id="learnSearch" type="text" autocomplete="off" spellcheck="false"
-             placeholder="搜索指标（名称 / 英文 / 拼音首字母）" class="learn-search">
-    </div>
-  </section>
-  <div class="learn-body" id="learnBody"><!-- 指标卡由 learn.js 渲染 --></div>
-  <!-- 液态玻璃底部导航 -->
-  <div class="learn-nav-float" id="learnNavFloat">
-    <button data-cat="stock" class="on">股市</button>
-    <button data-cat="fund">基金</button>
-    <button data-cat="bond">债市</button>
-  </div>
-</main>
-
-<!-- ═══════════ 设置页 ═══════════ -->
-<main class="page" id="page-settings">
-  <div class="stub-card settings-card">
-    <h2>设置</h2>
-    <label class="setting-row"><input type="checkbox" id="optDark"> 深色模式（默认浅色）</label>
-    <label class="setting-row"><input type="checkbox" id="optDense"> 紧凑行高（表格行高 26px）</label>
-    <label class="setting-row"><input type="checkbox" id="optColor"> 涨跌着色（正红负绿，A股口径）</label>
-    <label class="setting-row"><input type="checkbox" id="optGood"> 指标优选高亮（绿色 = 达到市场通用优秀标准，如夏普≥1、回撤≤10%）</label>
-    <label class="setting-row"><input type="checkbox" id="optCache"> 使用本地缓存（1 个月同步期内直接读取，不重新请求）</label>
-    <p class="stub-dim">设置会自动保存到本地浏览器。数据通过 server.py 中继实时调用天天基金公开接口。</p>
-  </div>
-</main>
-
-<!-- ═══════════ 表头筛选弹窗 ═══════════ -->
+<!-- 表头筛选弹窗 -->
 <div class="filter-pop" id="filterPop" hidden>
   <div class="fp-head"><b id="fpTitle">筛选</b><span class="fp-close" id="fpClose">×</span></div>
   <div class="fp-quick" id="fpQuick">
@@ -168,10 +62,10 @@ try {
   </div>
 </div>
 
-<!-- ═══════════ 表头指标说明卡 ═══════════ -->
+<!-- 表头指标说明卡 -->
 <div class="stat-pop" id="statPop" hidden></div>
 
-<!-- ═══════════ 对比工具条（选中基金后浮现） ═══════════ -->
+<!-- 对比工具条（选中基金后浮现） -->
 <div class="cmp-bar" id="cmpBar" hidden>
   <span class="cmp-bar-text">对比 <b id="cmpCount">0</b>/4</span>
   <span class="cmp-names" id="cmpNames"></span>
@@ -179,7 +73,7 @@ try {
   <button type="button" class="btn btn-ghost" id="cmpClear">清空</button>
 </div>
 
-<!-- ═══════════ 基金对比弹窗 ═══════════ -->
+<!-- 基金对比弹窗 -->
 <div class="chart-veil" id="cmpVeil" hidden>
   <div class="chart-modal" id="cmpModal">
     <div class="cm-head"><b>基金对比</b><span class="cm-sub" id="cmpSub"></span><span class="cm-close" id="cmpClose">×</span></div>
@@ -194,7 +88,7 @@ try {
   </div>
 </div>
 
-<!-- ═══════════ 业绩走势对比图 ═══════════ -->
+<!-- 业绩走势对比图 -->
 <div class="chart-veil" id="chartVeil" hidden>
   <div class="chart-modal" id="chartModal">
     <div class="cm-head">
@@ -213,7 +107,7 @@ try {
   </div>
 </div>
 
-<!-- ═══════════ 加载遮罩 ═══════════ -->
+<!-- 加载遮罩 -->
 <div class="load-overlay" id="loadOverlay" hidden>
   <div class="load-card">
     <div class="load-title"><span class="dot"></span> 实时数据加载中</div>
@@ -225,11 +119,11 @@ try {
   </div>
 </div>
 
-<!-- 离线兜底数据（可选） -->
-<script src="data/data.js"></script>
-<script src="assets/app.js"></script>
-<script src="assets/market.js"></script>
-<script src="assets/learn-data.js"></script>
-<script src="assets/learn.js"></script>
+<!-- 壳层服务（主题/时钟/自选角标） + 路由；各页面组件由路由按需懒加载（会话级防缓存）：
+     page-fundtable.js+app.js（宽基/债基/自选）· page-market.js · learn-data.js+page-learn.js · page-settings.js
+     注意：以下 ?v= 版本号在壳层脚本（data.js/shell.js/router.js）内容变更时需手动递增 -->
+<script src="data/data.js?v=20261122a"></script>
+<script src="assets/core/shell.js?v=20261122a"></script>
+<script src="assets/router.js?v=20261122a"></script>
 </body>
 </html>
