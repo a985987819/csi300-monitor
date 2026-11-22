@@ -195,7 +195,16 @@ body {
   border-bottom: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
   position: fixed; top: 0; left: 0; right: 0; z-index: 50;
-  transition: background 0.25s ease;
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+/* 滚动后加深玻璃底色：内容透出时保持文字对比度 */
+.topbar.scrolled {
+  background: var(--glass-bg-strong);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+html.dark .topbar.scrolled {
+  background: var(--glass-bg-strong);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand { font-size: 19px; font-weight: 700; letter-spacing: 0.5px; white-space: nowrap; color: var(--text-strong); }

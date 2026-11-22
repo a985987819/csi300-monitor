@@ -2908,4 +2908,27 @@
   } else {
     try { boot(); } catch (e) { window.__bootErr = e.stack || String(e); }
   }
+
+  /* ── 顶栏滚动感知：滚动后加深玻璃底色，保证下方内容透过时文字对比度 ── */
+  (function () {
+    var bar = document.querySelector(".topbar");
+    if (!bar) return;
+    var ticking = false;
+    function update() {
+      ticking = false;
+      var y = window.scrollY || window.pageYOffset || 0;
+      var page = document.querySelector(".page.active");
+      if (page) y += page.scrollTop || 0;
+      bar.classList.toggle("scrolled", y > 8);
+    }
+    function queue() {
+      if (!ticking) { ticking = true; requestAnimationFrame(update); }
+    }
+    window.addEventListener("scroll", queue, { passive: true });
+    /* 页面容器自身滚动（如 #page-learn）也纳入；capture 捕获所有子滚动源 */
+    document.addEventListener("scroll", function (ev) {
+      if (ev.target && ev.target.nodeType === 1 && ev.target.classList.contains("page")) queue();
+    }, { capture: true, passive: true });
+    update();
+  })();
 })();
