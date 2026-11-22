@@ -15,7 +15,7 @@
       '<p class="stub-dim">设置会自动保存到本地浏览器。数据通过 server.py 中继实时调用天天基金公开接口。</p>' +
     '</div>';
 
-  function $(id) { return document.getElementById(id); }
+  var $ = window.Util.$;
 
   window.AppPages = window.AppPages || {};
   window.AppPages.settings = {

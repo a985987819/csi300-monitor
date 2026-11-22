@@ -34,16 +34,8 @@
   function loadScript(src) {
     if (chunkCache[src]) return chunkCache[src];
     var url = src + (src.indexOf("?") >= 0 ? "&" : "?") + SESS;
-    chunkCache[src] = new Promise(function (resolve, reject) {
-      var s = document.createElement("script");
-      s.src = url;
-      s.onload = function () { resolve(); };
-      s.onerror = function () {
-        delete chunkCache[src];   /* 允许重试 */
-        reject(new Error("脚本加载失败：" + src));
-      };
-      document.head.appendChild(s);
-    });
+    chunkCache[src] = (window.Util ? Util.loadScript(url) : Promise.reject(new Error("Util 未就绪")))
+      .catch(function (e) { delete chunkCache[src]; throw e; });
     return chunkCache[src];
   }
   function loadScripts(list) {
@@ -63,14 +55,36 @@
     appEl.innerHTML = "";
     var d = document.createElement("main");
     d.className = "page active";
-    d.innerHTML = '<div class="stub-card" style="margin:60px auto;max-width:520px">' +
-      "<h2>页面加载失败</h2><p class='stub-dim'>" + msg + "</p>" +
-      '<p style="margin-top:14px"><button class="btn btn-green" id="routeRetry">⟳ 重试</button></p></div>';
+    d.innerHTML = errorCardHtml("页面加载失败", msg);
     appEl.appendChild(d);
     d.querySelector("#routeRetry").addEventListener("click", function () {
       route(true);
     });
   }
+  /* 页面 chunk 已加载但 mount/activate 抛错：不白屏，显示可重试错误卡 */
+  function showPageError(root, title, e) {
+    var msg = (e && (e.message || String(e))) || "未知错误";
+    if (window.console) console.warn("[route] " + title + " 渲染失败:", e);
+    root.innerHTML = errorCardHtml(title + " 组件渲染失败", msg);
+    root.classList.add("active");
+    document.querySelectorAll("#app > .page").forEach(function (p) {
+      p.classList.toggle("active", p === root);
+    });
+    var btn = root.querySelector("#routeRetry");
+    if (btn) btn.addEventListener("click", function () {
+      var mod = window.AppPages[currentRoute() && currentRoute().page];
+      if (mod) { mod._mounted = false; mod._mountErr = null; }
+      root.innerHTML = "";
+      route(true);
+    });
+  }
+  function errorCardHtml(title, msg) {
+    return '<div class="stub-card" style="margin:60px auto;max-width:520px">' +
+      "<h2>" + (window.Util ? Util.esc(title) : title) + "</h2>" +
+      "<p class='stub-dim'>" + (window.Util ? Util.esc(msg) : msg) + "</p>" +
+      '<p style="margin-top:14px"><button class="btn btn-green" id="routeRetry">⟳ 重试</button></p></div>';
+  }
+  function currentRoute() { return ROUTES[currentId]; }
 
   /* 激活目标路由：懒加载 chunk → 挂载 → activate；期间旧路由作废 */
   function route(force) {
@@ -97,13 +111,19 @@
       }
       if (mod && !mod._mounted) {
         mod._mounted = true;
-        mod.mount(root);
+        try { mod.mount(root); }
+        catch (e) { mod._mountErr = e; }
+      }
+      if (mod && mod._mountErr) {
+        showPageError(root, r.title, mod._mountErr);
+        return;
       }
       /* 隐藏其它已挂载页面，显示当前页 */
       document.querySelectorAll("#app > .page").forEach(function (p) {
         p.classList.toggle("active", p === root);
       });
-      if (mod && mod.activate) mod.activate(r.params || {});
+      try { if (mod && mod.activate) mod.activate(r.params || {}); }
+      catch (e) { showPageError(root, r.title, e); }
     }).catch(function (e) {
       if (gen !== routeGen) return;
       showShellError((e && e.message) || String(e));

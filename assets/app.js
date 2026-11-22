@@ -321,7 +321,7 @@
   var cmpSel = [];             // 对比所选基金 code（有序，最多 4）
   var CMP_MAX = 4;
 
-  var $ = function (id) { return document.getElementById(id); };
+  var $ = window.Util.$;   /* 共享工具别名（tbody 捕获前必须就绪） */
   /* 页面骨架由路由懒加载注入（assets/pages/page-fundtable.js 先于本脚本执行），
      引擎脚本加载时 DOM 已就绪；此处仍走懒绑定以兼容直接打开的异常场景 */
   var tbody = $("tbody"), thead = $("thead"), scrollBox = $("tableScroll");
@@ -365,12 +365,10 @@
     return c;
   }
 
-  /* ══════════ 3. 工具 ══════════ */
-  function esc(s) {
-    return String(s === null || s === undefined ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
+  /* ══════════ 3. 工具（通用部分复用 assets/core/util.js，仅保留引擎专属） ══════════ */
+  var esc = window.Util.esc;
+  var debounce = window.Util.debounce;
+  var pad2 = window.Util.pad2;
   function parseNum(v) {
     if (v === null || v === undefined) return null;
     var s = String(v).replace(/%/g, "").replace(/,/g, "").trim();
@@ -378,7 +376,6 @@
     var n = parseFloat(s);
     return isNaN(n) ? null : n;
   }
-  function pad2(n) { return (n < 10 ? "0" : "") + n; }
   function stripTags(s) {
     return String(s === null || s === undefined ? "" : s)
       .replace(/<[^>]+>/g, " ")
@@ -404,14 +401,6 @@
     if (m) return m[1] + "-" + pad2(+m[2]) + "-" + pad2(+m[3]);
     m = s.match(/^\d{4}-\d{1,2}-\d{1,2}/);
     return m ? m[0] : "--";
-  }
-  function debounce(fn, ms) {
-    var t = null;
-    return function () {
-      var args = arguments, self = this;
-      clearTimeout(t);
-      t = setTimeout(function () { fn.apply(self, args); }, ms);
-    };
   }
   function familyKey(name) {
     var n = String(name || "").replace(/\s+/g, "");
@@ -928,7 +917,8 @@
   var SYNC_INTERVAL = 32 * 86400 * 1000;   // 间隔超过 1 个月才重新同步
   var syncInfo = { ts: 0, tabs: {} };
   function loadSync() {
-    try { syncInfo = JSON.parse(localStorage.getItem(SYNC_KEY) || "{}"); } catch (e) { syncInfo = {}; }
+    syncInfo = Util.store.get(SYNC_KEY, { ts: 0, tabs: {} });
+    if (!syncInfo || typeof syncInfo !== "object") syncInfo = { ts: 0, tabs: {} };
     if (!syncInfo.tabs) syncInfo.tabs = {};
     syncInfo.ts = syncInfo.ts || 0;
   }
@@ -939,11 +929,11 @@
   function markSynced(key) {
     syncInfo.tabs[key] = Date.now();
     syncInfo.ts = Date.now();
-    try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncInfo)); } catch (e) {}
+    Util.store.set(SYNC_KEY, syncInfo);
   }
   function cacheGet(k, ttlOverride) {
     try {
-      var o = JSON.parse(localStorage.getItem(LS_LIVE + k));
+      var o = Util.store.get(LS_LIVE + k);
       // ttlOverride：1 个月同步间隔内，完整记录视为新鲜（40 天）；残缺记录仍按自身短 TTL
       var ttl = ttlOverride
         ? (o && o.partial ? (o.ttl || LIVE_TTL) : ttlOverride)
@@ -963,9 +953,8 @@
         for (var i = 0; i < localStorage.length; i++) {
           var key = localStorage.key(i);
           if (key && key.indexOf(LS_LIVE) === 0) {
-            var t = 0;
-            try { t = JSON.parse(localStorage.getItem(key)).t || 0; } catch (e2) {}
-            entries.push([key, t]);
+            var o2 = Util.store.get(key, {});
+            entries.push([key, (o2 && o2.t) || 0]);
           }
         }
         entries.sort(function (a, b) { return a[1] - b[1]; });
@@ -976,11 +965,11 @@
     }
   }
   function loadFav() {
-    try { favStore = JSON.parse(localStorage.getItem(FAV_KEY) || "{}"); } catch (e) { favStore = {}; }
+    favStore = Util.store.get(FAV_KEY, {});
     if (!favStore || typeof favStore !== "object") favStore = {};
   }
   function saveFav() {
-    try { localStorage.setItem(FAV_KEY, JSON.stringify(favStore)); } catch (e) {}
+    Util.store.set(FAV_KEY, favStore);
     updateFavBadge();
   }
   function isFav(code) { return !!favStore[code]; }
@@ -990,6 +979,8 @@
     saveFav();
   }
   function updateFavBadge() {
+    /* 角标实现上移至壳服务（assets/core/shell.js），自选页签未挂载时也能显示 */
+    if (window.Shell && Shell.refreshFavBadge) { Shell.refreshFavBadge(); return; }
     var b = $("favBadge");
     if (b) b.textContent = Object.keys(favStore).length;
   }
@@ -1299,8 +1290,7 @@
 
   /* ══════════ 7. 列可见性（分组勾选） ══════════ */
   function loadVisible() {
-    var saved = null;
-    try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null"); } catch (e) { saved = null; }
+    var saved = Util.store.get(STORE_KEY, null);
     ALL_COLS.forEach(function (c) { visible[c.key] = true; });
     if (saved && typeof saved === "object") {
       ALL_COLS.forEach(function (c) { if (c.key in saved) visible[c.key] = !!saved[c.key]; });
@@ -1309,7 +1299,7 @@
   function saveVisible() {
     var o = {};
     ALL_COLS.forEach(function (c) { o[c.key] = visible[c.key]; });
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); } catch (e) {}
+    Util.store.set(STORE_KEY, o);
   }
   function visibleCols() {
     var out = [];
@@ -2180,10 +2170,8 @@
         });
       }
       if (!f) {
-        try {
-          var o = JSON.parse(localStorage.getItem("hs300.live.v3." + code) || "null");
-          if (o && o.v) f = o.v;
-        } catch (e) {}
+        var o = Util.store.get("hs300.live.v3." + code);
+        if (o && o.v) f = o.v;
       }
       return f || { code: code, name: code };
     });
@@ -2384,8 +2372,8 @@
   function applySettingsState() {
     /* 设置页组件（assets/pages/page-settings.js）负责输入绑定与持久化；
        引擎只消费设置状态，并在收到变更事件时重渲染。 */
-    var st = {};
-    try { st = JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}"); } catch (e) { st = {}; }
+    var st = Util.store.get(LS_SETTINGS, {});
+    if (!st || typeof st !== "object") st = {};
     if (st.useCache === undefined) st.useCache = true;
     if (st.good === undefined) st.good = true;
     goodOn = !!st.good;

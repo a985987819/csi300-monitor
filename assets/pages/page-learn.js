@@ -7,12 +7,8 @@
   var openSet = {};            /* 已展开的指标名集合（按分类记忆） */
   var LEARN_DATA = window.LEARN_DATA || { stock: [], fund: [], bond: [] };
 
-  function $(id) { return document.getElementById(id); }
-  function esc(s) {
-    return String(s === null || s === undefined ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
+  var $ = window.Util.$;
+  var esc = window.Util.esc;
 
   /* ═══════════ SVG 图示生成器（33 种） ═══════════ */
   var DG_W = 200, DG_H = 72;

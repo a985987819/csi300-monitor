@@ -5,17 +5,26 @@
 
   var LS_SETTINGS = "hs300.settings.v1";
   var FAV_KEY = "hs300.fav.v1";
+  var $ = window.Util.$;
+  var store = window.Util.store;
 
-  function $(id) { return document.getElementById(id); }
+  /* 全局错误诊断钩子：任何未捕获异常留档 window.__lastGlobalErr，便于远程排查 */
+  window.addEventListener("error", function (ev) {
+    window.__lastGlobalErr = { t: Date.now(), msg: ev.message, src: ev.filename && ev.filename.split("/").pop() + ":" + ev.lineno };
+    if (window.console) console.warn("[shell] 全局错误:", ev.message);
+  });
+  window.addEventListener("unhandledrejection", function (ev) {
+    var r = ev.reason;
+    window.__lastGlobalErr = { t: Date.now(), msg: (r && (r.message || String(r))) || "unhandledrejection" };
+    if (window.console) console.warn("[shell] 未处理的 Promise 拒绝:", r);
+  });
+
   function readSettings() {
-    try { return JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}") || {}; }
-    catch (e) { return {}; }
+    var st = store.get(LS_SETTINGS, {});
+    return st && typeof st === "object" ? st : {};
   }
   function mergeSettings(patch) {
-    var st = readSettings();
-    Object.keys(patch).forEach(function (k) { st[k] = patch[k]; });
-    try { localStorage.setItem(LS_SETTINGS, JSON.stringify(st)); } catch (e) {}
-    return st;
+    return store.merge(LS_SETTINGS, patch);
   }
 
   /* ── 主题（设置页与顶栏按钮共用） ── */
@@ -43,13 +52,11 @@
     if (ms) ms.textContent = open ? "开市" : "休市";
   }
 
-  /* ── 我的自选角标（自选页签未挂载时也能显示数量） ── */
+  /* ── 我的自选角标（自选页签未挂载时也能显示数量；引擎保存自选后亦委托此处） ── */
   function refreshFavBadge() {
     var n = 0;
-    try {
-      var store = JSON.parse(localStorage.getItem(FAV_KEY) || "{}");
-      if (store && typeof store === "object") n = Object.keys(store).length;
-    } catch (e) {}
+    var faved = store.get(FAV_KEY, {});
+    if (faved && typeof faved === "object") n = Object.keys(faved).length;
     var b = $("favBadge");
     if (b) b.textContent = n;
   }

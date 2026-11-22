@@ -79,14 +79,10 @@
       " 数据源不提供" + esc(moduleName) + "数据——切换「东方财富」查看完整版。</div>";
   }
 
-  /* ─────────── 基础工具 ─────────── */
-  function $(id) { return document.getElementById(id); }
-  function esc(s) {
-    return String(s === null || s === undefined ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  function pad2(x) { return (x < 10 ? "0" : "") + x; }
+  /* ─────────── 基础工具（通用部分复用 assets/core/util.js） ─────────── */
+  var $ = window.Util.$;
+  var esc = window.Util.esc;
+  var pad2 = window.Util.pad2;
   function bjNow() {
     var parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
@@ -286,12 +282,6 @@
     { tx: "sz399006", name: "创业板指", secid: "0.399006" },
     { tx: "sh000688", name: "科创50", secid: "1.000688" },
   ];
-  function valLoadSnaps() {
-    try { return JSON.parse(localStorage.getItem(VAL_SNAP_KEY) || "{}"); } catch (e) { return {}; }
-  }
-  function valSaveSnaps(s) {
-    try { localStorage.setItem(VAL_SNAP_KEY, JSON.stringify(s)); } catch (e) {}
-  }
   // 腾讯快照批量获取指数PE-TTM/股息率（field [39]=PE-TTM / [49]=股息率%，已验证）
   function fetchValQuotes() {
     return new Promise(function (resolve) {
@@ -915,7 +905,7 @@
 
   /* ─────────── 主流程（三级数据源：①localStorage ②服务器本地快照 ③东财直连） ─────────── */
   function loadCache() {
-    try { return JSON.parse(localStorage.getItem(lsKey()) || "null"); } catch (e) { return null; }
+    return Util.store.get(lsKey(), null);
   }
   function chipText(t, loading) {
     var chip = $("mktChip");
@@ -970,7 +960,7 @@
     }).then(function (snap) {
       if (stale()) return;
       if (snap && snap.v === SNAP_V && snap.baseDate === approx && snap.boards) {
-        try { localStorage.setItem(lsKey(), JSON.stringify(snap)); } catch (e) {}
+        Util.store.set(lsKey(), snap);
         renderAll(snap);
         chipText("数据截至 " + snap.baseDate + " 收盘 · " + PROVIDERS[activeProvider].label + "源 · 服务器本地快照", false);
         setRule("基准日 " + snap.baseDate + " · 采集于 " + fmtClock(snap.savedAt) + " · 本机快照直读，零上游请求");
@@ -1479,10 +1469,10 @@
   var HS300_SECID = "1.000300";
 
   function loadTracking() {
-    try { return JSON.parse(localStorage.getItem(TRACK_KEY) || "null"); } catch (e) { return null; }
+    return Util.store.get(TRACK_KEY, null);
   }
   function saveTracking(t) {
-    try { localStorage.setItem(TRACK_KEY, JSON.stringify(t)); } catch (e) {}
+    Util.store.set(TRACK_KEY, t);
   }
 
   // 复盘专属补充数据：观察池F10财务 + 腾讯估值快照 + 沪深300参照 + 两市成交序列
@@ -1999,7 +1989,7 @@
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
       failN: state.klineFail + state.flowFail,
     };
-    try { localStorage.setItem(lsKey(), JSON.stringify(data)); } catch (e) {}
+    Util.store.set(lsKey(), data);
     // 双写：本机服务器快照（data/mkt/{基准日}.json），同机其他浏览器当日零请求直读
     if (SERVER_OK) {
       try {
@@ -2373,10 +2363,11 @@
   }
   // 估值快照积累 + 百分位计算
   function valSnapGet() {
-    try { return JSON.parse(localStorage.getItem(VAL_SNAP_KEY) || "{}"); } catch (e) { return {}; }
+    var s = Util.store.get(VAL_SNAP_KEY, {});
+    return s && typeof s === "object" ? s : {};
   }
   function valSnapSave(s) {
-    try { localStorage.setItem(VAL_SNAP_KEY, JSON.stringify(s)); } catch (e) {}
+    Util.store.set(VAL_SNAP_KEY, s);
   }
   function renderValuation(data) {
     var host = $("mktValWrap");
@@ -2400,6 +2391,7 @@
     }
     var html = '<table class="mkt-table"><thead><tr>' +
       "<th>指数</th><th>PE-TTM</th><th>股息率</th><th>PE百分位</th><th>定投档位</th></tr></thead><tbody>";
+    var snaps = valSnapGet();   /* 修复：历史快照用于百分位计算（此前裸引用会抛 ReferenceError） */
     VAL_INDEXES.forEach(function (ix) {
       var q = quotes[ix.tx];
       if (!q || q.pe === null || q.pe === undefined) return;
