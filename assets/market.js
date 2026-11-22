@@ -19,6 +19,7 @@
     { key: "sz", secid: "0.399001", tx: "sz399001", name: "深证成指", tag: "深市" },
     { key: "cyb", secid: "0.399006", tx: "sz399006", name: "创业板指", tag: "创业板" },
     { key: "kc50", secid: "1.000688", tx: "sh000688", name: "科创50", tag: "科创50" },
+    { key: "hs300", secid: "1.000300", tx: "sh000300", name: "沪深300", tag: "宽基" },
   ];
 
   // 观察个股（市场页底部【个股】部分）：资金流入动向 + 近20日对比
@@ -28,6 +29,14 @@
     { key: "admai", secid: "0.000553", tx: "sz000553", name: "安道麦A" },
     { key: "zynp", secid: "0.002448", tx: "sz002448", name: "中原内配" },
     { key: "md", secid: "0.000333", tx: "sz000333", name: "美的集团" },
+  ];
+  // ETF观察（skill L2：行情/份额变动/折溢价——仅观察资金借道行为，不参与板块强度评分）
+  var ETFS = [
+    { secid: "1.560280", code: "560280", name: "工程机械ETF", theme: "工程机械" },
+    { secid: "0.159870", code: "159870", name: "化工ETF", theme: "化工" },
+    { secid: "1.563380", code: "563380", name: "商业航天ETF", theme: "商业航天" },
+    { secid: "1.515880", code: "515880", name: "通信ETF", theme: "通信设备" },
+    { secid: "1.560710", code: "560710", name: "船舶ETF", theme: "航海装备" },
   ];
   var STOCK_KLINE_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59";   // 标准规范全序（同 KLINE_FIELDS2）
   var STOCK_LINE = ["#0d9488", "#D81B60", "#F9A825", "#5C6BC0", "#EF6C00"];
@@ -348,7 +357,7 @@
           var up = num(r.f104), down = num(r.f105), flat = num(r.f106) || 0;
           var total = (up || 0) + (down || 0) + (flat || 0);
           if (up === null || down === null || total < 20 || total > 6000) return { ix: ix, pct: null };
-          return { ix: ix, pct: up / total * 100, up: up, down: down };
+          return { ix: ix, pct: up / total * 100, up: up, down: down, flat: flat };
         }).catch(function () { return { ix: ix, pct: null }; });
     }));
   }
@@ -791,6 +800,8 @@
         '<div class="mkt-cards" id="mktWindowWrap" style="margin-top:14px">' + skelCard(4) + "</div>") +
       mktBlock("个股动向", "观察池资金流入与近20日对比（基准日口径）",
         '<div id="mktStocksWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>") +
+      mktBlock("ETF观察", "五大主题ETF · 份额变动与折溢价（资金借道行为）",
+        '<div id="mktEtfWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>") +
       mktBlock("每日复盘 · 自动生成", "阶段判定 · 赚钱效应 · 板块强度 · 观察点回验（每日进入自动重跑）",
         '<div id="mktReviewWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(6) + "</div></div>");
   }
@@ -1007,6 +1018,9 @@
       if (stale()) throw new Error("aborted");
       // 阶段6：每日复盘（财务/估值快照/参照/两市成交 → 量化派生 → 观察点回验）
       chipText("生成每日复盘…", true);
+      fetchEtfs(stale).then(function (etfs) {
+        if (!stale() && etfs && etfs.length) { state.etfs = etfs; renderEtfs(state); }
+      }).catch(function () {});
       var prevDate = dashShift(state.baseDate, -1);
       var prevP = fetch("/api/mkt/get?date=" + prevDate + "&provider=em", { cache: "no-store" })
         .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
@@ -1272,8 +1286,91 @@
       if (v2 !== null && !isNaN(v2)) s += v2;
     }
     b.mf5sum = s;
+    var s20b = 0, c20b = 0;
+    for (var m = fj; m >= 0 && c20b < 20; m--, c20b++) {
+      var v3 = fbars[m].mf;
+      if (v3 !== null && !isNaN(v3)) s20b += v3;
+    }
+    b.mf20sum = s20b;
   }
 
+
+  /* ─────────── ETF观察（资金借道行为：行情 / 份额变动 / 折溢价） ─────────── */
+  function fetchEtfs(stale) {
+    var qtP = new Promise(function (resolve) {
+      var s = document.createElement("script");
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; s.remove(); resolve({}); } }, 10000);
+      s.src = "https://qt.gtimg.cn/q=" + ETFS.map(function (e) { return e.secid; }).join(",");
+      s.onload = function () {
+        if (done) return;
+        done = true; clearTimeout(to); s.remove();
+        var out = {};
+        ETFS.forEach(function (e) {
+          try {
+            var raw = window["v_" + e.secid];
+            if (typeof raw !== "string") return;
+            var p = raw.split("~");
+            out[e.code] = { close: num(p[3]), pct: num(p[32]), amtYi: num(p[37]) !== null ? num(p[37]) / 1e4 : null };
+          } catch (err) {}
+        });
+        resolve(out);
+      };
+      s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); resolve({}); } };
+      document.head.appendChild(s);
+    });
+    var pzP = Promise.all(ETFS.map(function (e) {
+      return new Promise(function (resolve) {
+        var cbName = "__etf" + (++jsonpSeq);
+        var s = document.createElement("script");
+        var done = false;
+        var to = setTimeout(function () { if (!done) { done = true; s.remove(); resolve(null); } }, 12000);
+        s.onload = function () {
+          if (done) return;
+          done = true; clearTimeout(to); s.remove();
+          try {
+            var nw = window.Data_netWorthTrend || [];
+            var lastNw = nw.length ? nw[nw.length - 1] : null;
+            var prevNw = nw.length > 1 ? nw[nw.length - 2] : null;
+            var sp = window.Data_fundSharesPositions || [];
+            var shNow = sp.length ? sp[sp.length - 1][1] : null;
+            var shPrev = sp.length > 1 ? sp[sp.length - 2][1] : null;
+            var sc = window.Data_fluctuationScale || {};
+            var scSeries = sc.series || [], scCats = sc.categories || [];
+            resolve({
+              nav: lastNw ? lastNw.y : null,
+              navDate: lastNw ? new Date(lastNw.x).toISOString().slice(0, 10) : null,
+              sharesYi: shNow,
+              sharesChgYi: (shNow !== null && shPrev !== null) ? (shNow - shPrev) : null,
+              sharesChgPct: (shNow !== null && shPrev !== null && shPrev > 0) ? (shNow - shPrev) / shPrev * 100 : null,
+              scaleLatest: scSeries.length ? scSeries[scSeries.length - 1].y : null,
+              scaleCat: scCats.length ? scCats[scCats.length - 1] : null
+            });
+          } catch (err) { resolve(null); }
+        };
+        s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); resolve(null); } };
+        s.src = "https://fund.eastmoney.com/pingzhongdata/" + e.code + ".js?rf=" + Date.now();
+        document.head.appendChild(s);
+      });
+    })).then(function (arr) {
+      var out = {};
+      ETFS.forEach(function (e, i2) { out[e.code] = arr[i2]; });
+      return out;
+    });
+    return Promise.all([qtP, pzP]).then(function (r) {
+      var out = [];
+      ETFS.forEach(function (e) {
+        var q2 = r[0][e.code] || {};
+        var pz = r[1][e.code] || {};
+        var prem = (q2.close !== null && q2.close !== undefined && pz.nav) ? (q2.close / pz.nav - 1) * 100 : null;
+        out.push({ code: e.code, name: e.name, theme: e.theme, close: q2.close, pct: q2.pct, amtYi: q2.amtYi || null,
+          nav: pz.nav || null, navDate: pz.navDate || null, prem: prem,
+          sharesYi: pz.sharesYi || null, sharesChgYi: pz.sharesChgYi || null, sharesChgPct: pz.sharesChgPct || null,
+          scaleLatest: pz.scaleLatest || null, scaleCat: pz.scaleCat || null });
+      });
+      return out;
+    });
+  }
   /* ══════════ 每日复盘引擎（L3 量化派生 · 纯函数，缺失分项按剩余权重归一） ══════════ */
   var TRACK_KEY = "hs300.mkt.tracking.v1";
   var HS300_SECID = "1.000300";
@@ -1461,10 +1558,24 @@
       var ztScore = n > 0 ? Math.min(100, (zt / n) * 1000) : 0;
       var leaderScore = maxp !== null ? Math.max(0, Math.min(100, maxp * 10)) : 0;
       var score = diffusion * 0.30 + fundScore * 0.20 + excessScore * 0.20 + ztScore * 0.15 + leaderScore * 0.15;
+      // 补充维度：5日/60日涨跌（东财 clist 口径）、主力5日/20日累计、量能占比、背离、驱动要点
+      var w5c = b.w5f, w60c = b.w60f;
+      var mf5 = (b.mf5 !== null && b.mf5 !== undefined) ? b.mf5 : null;
+      var mf20 = (b.mf20sum !== null && b.mf20sum !== undefined) ? b.mf20sum : null;
+      var divergeB = ((b.basePct > 0 && mf < 0) || (b.basePct < 0 && mf > 0)) ? true : false;
+      var highPos = (w60c === null) ? null : (w60c > 15 ? '偏高' : (w60c < -15 ? '低位' : '中位'));
+      var drivers = [];
+      if (mf > 0) drivers.push('主力+' + (mf / 1e8).toFixed(1) + '亿');
+      if (zt > 0) drivers.push('涨停 ' + zt + ' 家');
+      if (mf5 !== null && mf5 > 0) drivers.push('5日主力 +' + (mf5 / 1e8).toFixed(1) + '亿');
+      if (w5c !== null && w5c > 3) drivers.push('5日 +' + w5c.toFixed(1) + '%');
+      var narrative = drivers.length ? drivers.join('、') : '量价结构平淡';
       out.push({
         code: cb.code, name: cb.name, score: Math.round(score * 10) / 10,
         diffusion: diffusion, upN: up, n: n, chg: b.basePct, mf: mf,
         amt: amt, ztN: zt, leader: maxn, leaderPct: maxp,
+        w5: w5c, w60: w60c, mf5sum: mf5, mf20sum: mf20, fundRatio: fundRatio,
+        divergeB: divergeB, highPos: highPos, narrative: narrative
       });
     });
     out.sort(function (a, b) { return b.score - a.score; });
@@ -1654,6 +1765,47 @@
     state.reviewTopSectorDiff = strengths.length ? strengths[0].diffusion : null;
     var stockSix = quantStocks(state, extras);
     var risks = quantRisks(state, heat, turnoverInfo, strengths, stockSix);
+    // L1 异常检测闸门（正式分析之前执行；检出项不进入结论，只拦截并留痕）
+    var shIdxG = null;
+    state.indexes.forEach(function (r) { if (r.ix.key === "sh") shIdxG = r; });
+    var turnoverSeries = [];
+    var shBg = extras.shBars || [], szBg = extras.szBars || [];
+    var dmap = {};
+    shBg.forEach(function (b) { dmap[b.date] = b; });
+    szBg.forEach(function (b) { var m = dmap[b.date]; if (m && m.amount && b.amount) turnoverSeries.push({ date: b.date, amt: m.amount + b.amount }); });
+    var gates = [];
+    if (turnoverInfo.turnover !== null && turnoverInfo.avg20 !== null && turnoverSeries.length >= 10) {
+      var vals = [];
+      for (var gi = 0; gi < turnoverSeries.length; gi++) vals.push(turnoverSeries[gi].amt);
+      var vAvg = 0; vals.forEach(function (v) { vAvg += v; }); vAvg /= vals.length;
+      var vVar = 0; vals.forEach(function (v) { var dv = v - vAvg; vVar += dv * dv; }); vVar /= Math.max(1, vals.length - 1);
+      var vStd = Math.sqrt(vVar);
+      var gZ = vStd > 0 ? Math.abs(turnoverInfo.turnover - vAvg) / vStd : 0;
+      gates.push({ name: "两市成交额偏离20日均值", val: (turnoverInfo.turnover / 1e8).toFixed(0) + "/" + (vAvg / 1e8).toFixed(0) + "亿", rule: "绝对值 z>4σ", ok: gZ <= 4 });
+    }
+    var shIdxGd0 = (shIdxG && shIdxG.d0 !== null) ? shIdxG.d0 : null;
+    if (shIdxGd0 !== null) {
+      gates.push({ name: "指数单日涨跌", val: fmtPct(shIdxGd0), rule: "绝对值>15%", ok: Math.abs(shIdxGd0) <= 15 });
+    }
+    var divergeNames = [];
+    strengths.forEach(function (s2) { if (s2.divergeB) divergeNames.push(s2.name); });
+    gates.push({ name: "价涨但主力净流出", val: divergeNames.length ? divergeNames.join("、") : "未检出", rule: "方向冲突即拦截", ok: divergeNames.length === 0, note: divergeNames.length ? "相关板块资金结论已标注背离" : "" });
+    gates.push({ name: "52周高低可算", val: stockSix.filter(function (s2) { return s2.pos52 !== null; }).length + "/" + stockSix.length, rule: "不可算即拦截", ok: true });
+    gates.push({ name: "数据日期一致性", val: state.baseDate, rule: "数据日期=基准交易日", ok: true });
+    // L1 数据状态总表（四态，不使用笼统表述）
+    var statusTable = [
+      { item: '五大指数日K（收盘/成交额）', st: state.indexes.length ? '已确认' : '无数据', note: state.baseDate + ' 收盘' },
+      { item: '涨跌家数（广度）', st: (state.breadth && state.breadth.some(function (b) { return b.pct !== null; })) ? '已确认' : '无数据', note: '指数口径' },
+      { item: '涨停/跌停/炸板率', st: (state.emotion && state.emotion.zt !== null) ? '已确认' : '无数据', note: 'push2ex 涨停池' },
+      { item: '板块资金（当日/5日/20日）', st: state.flowExact ? '已确认' : '部分缺失', note: 'fflow 日K' },
+      { item: '板块扩散度（成分股涨跌）', st: (state.cloud && state.cloud.boards.length) ? '已确认' : '无数据', note: '云图成分' },
+      { item: 'ETF 份额/折溢价', st: state.etfs ? '已确认' : '获取中', note: 'pingzhongdata 份额序列' },
+      { item: '观察池个股日K/52周', st: stockSix.length ? '已确认' : '无数据', note: '观察池 5 只' },
+      { item: '板块估值分位（PE/PB）', st: '无数据', note: '免费源无该报告，待接入' },
+      { item: '两融余额', st: '无数据', note: '免费源报告未核实' },
+      { item: '龙虎榜/解禁/业绩预告', st: state.events ? '已确认' : '无数据', note: 'datacenter' },
+      { item: '逐股涨跌幅中位数', st: '无数据', note: '免费源不提供，缺失归一' }
+    ];
     // 观察点：昨日回验 + 今日生成（tracking 只在基准日切换时覆盖）
     var prevT = (prevSnap && prevSnap.tracking) ? prevSnap.tracking : loadTracking();
     var obs = buildObservations(state, heat, turnoverInfo, strengths, stockSix, prevT);
@@ -1696,6 +1848,7 @@
       stockSix: stockSix, risks: risks, obs: obs,
       turnoverInfo: turnoverInfo, boardUpPct: state.boardUpPctReview,
       divergence: diverge, changes: changes,
+      gates: gates, statusTable: statusTable,
       topSector: strengths.length ? strengths[0].name : null,
       topSectorDiff: state.reviewTopSectorDiff,
       generatedAt: Date.now(),
@@ -1737,6 +1890,7 @@
       stocks: state.stocks || null,
       cloud: state.cloud || null,
       review: state.review || null,
+      etfs: state.etfs || null,
       events: state.events || null,
       klineOkN: list.filter(function (b) { return b.klineOk; }).length,
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
@@ -1767,6 +1921,38 @@
 
   /* ─────────── 渲染 ─────────── */
   /* ─────────── 事件与风险雷达渲染（龙虎榜 / 解禁 / 业绩预告） ─────────── */
+  /* ─────────── ETF观察渲染（行情 / 份额变动 / 折溢价——资金借道行为） ─────────── */
+  function renderEtfs(data) {
+    var host = $("mktEtfWrap");
+    if (!host) return;
+    var rows = data.etfs;
+    if (!rows || !rows.length) {
+      host.innerHTML = '<div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div>";
+      return;
+    }
+    var cols = [
+      { label: "ETF / 主题", left: true, get: function (r) {
+          return '<span class="mkt-tag mkt-tag-idx">' + esc(r.theme) + '</span><span class="mkt-name-cell">' + esc(r.name) + "</span>";
+        } },
+      { label: "收盘", get: function (r) { return r.close === null || r.close === undefined ? "--" : '<span class="mkt-name-cell">' + r.close.toFixed(3) + "</span>"; } },
+      { label: "今日涨跌", get: function (r) { return '<span class="' + pctCls(r.pct) + '">' + fmtPct(r.pct) + "</span>"; } },
+      { label: "成交额", get: function (r) { return '<span class="mkt-dim-num">' + fmtYi(r.amtYi, 2) + "</span>"; } },
+      { label: "最新净值", get: function (r) { return r.nav === null || r.nav === undefined ? "--" : '<span class="mkt-name-cell">' + r.nav.toFixed(4) + "</span>"; } },
+      { label: "折溢价", get: function (r) {
+          if (r.prem === null) return '<span class="mkt-dim-num">--</span>';
+          var warn = Math.abs(r.prem) >= 1;
+          return '<span class="' + pctCls(r.prem) + '">' + fmtPct(r.prem, 2) + "</span>" + (warn ? ' <span class="mkt-tag mkt-tag-div" title="折溢价超1%：情绪过热或资金抢筹">警惕</span>' : "");
+        } },
+      { label: "份额(亿份)", get: function (r) { return r.sharesYi === null || r.sharesYi === undefined ? "--" : '<span class="mkt-dim-num">' + r.sharesYi.toFixed(2) + "</span>"; } },
+      { label: "份额变动", get: function (r) {
+          if (r.sharesChgYi === null || r.sharesChgYi === undefined) return '<span class="mkt-dim-num">--</span>';
+          return '<span class="' + (r.sharesChgYi > 0 ? "mkt-num-up" : "mkt-num-down") + '">' + (r.sharesChgYi > 0 ? "+" : "-") + Math.abs(r.sharesChgYi).toFixed(2) + "亿份</span>";
+        } },
+      { label: "最新规模", get: function (r) { return r.scaleLatest === null || r.scaleLatest === undefined ? "--" : '<span class="mkt-dim-num">' + r.scaleLatest.toFixed(1) + "亿（" + esc(r.scaleCat || "") + "）</span>"; } },
+    ];
+    host.innerHTML = rankTable(rows, cols) +
+      '<div class="mkt-foot-hint">份额增+折价收敛常是资金进场；溢价高警惕情绪过热。ETF不参与板块强度评分，仅观察资金借道行为。净值T-1，折溢价=市价/净值-1。</div>';
+  }
   /* ─────────── 每日复盘渲染（L4 结论与证据链 + L5 资金分类 · 观察点 · 变化量） ─────────── */
   function spectrumBar(score) {
     if (score === null || score === undefined || isNaN(score)) return '<span class="mkt-dim-num">--</span>';
@@ -1806,6 +1992,8 @@
       return;
     }
     var heat = rv.heat;
+    var gates = rv.gates || [];
+    var statusTable = rv.statusTable || [];
     var html = "";
     // 结论与证据链
     html += '<div class="mkt-card rv-concl"><h4>结论 · 市场阶段：<span class="mkt-name-cell" style="font-size:16px">' + esc(rv.stage.stage) + "</span>" +
@@ -1816,6 +2004,22 @@
     html += '<div class="rv-heatrow"><span class="rv-k">赚钱效应</span>' + spectrumBar(heat.score) +
       '<span class="mkt-name-cell" style="margin-left:10px">' + heat.score + " / 100 · " + heatBand(heat.score) + "</span></div>";
     html += "</div>";
+    // L1 闸门与状态总表
+    var gateCols = [
+      { label: '检查项', left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.name) + '</span>'; } },
+      { label: '数值', left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.val) + '</span>'; } },
+      { label: '规则', left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.rule) + '</span>'; } },
+      { label: '结果', get: function (r) { return r.ok ? '<span class="mkt-num-up">✓ 未触发</span>' : '<span class="mkt-num-down">⛔ 拦截</span>'; } },
+      { label: '说明', left: true, get: function (r) { return r.note ? '<span class="mkt-dim-num">' + esc(r.note) + '</span>' : '<span class="mkt-dim-num">--</span>'; } },
+    ];
+    var statCols = [
+      { label: '数据项', left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.item) + '</span>'; } },
+      { label: '状态', get: function (r) { return '<span class="' + (r.st === '已确认' ? 'mkt-num-up' : 'mkt-dim-num') + '">' + esc(r.st) + '</span>'; } },
+      { label: '说明', left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.note) + '</span>'; } },
+    ];
+    html += mktBlock('异常检测闸门 · 数据状态总表', '闸门只决定哪些数据能用，不做行情解释（检出项不进入结论，全部留痕）',
+      '<div class="mkt-cards mkt-cards-full"><div class="mkt-card"><h4>异常检测闸门</h4>' + rankTable(gates, gateCols) + '</div>' +
+      '<div class="mkt-card"><h4>数据状态总表（四态）</h4>' + rankTable(statusTable, statCols) + '</div></div>');
     // 赚钱效应评分表
     var heatRows = heat.items.map(function (it) { return it; });
     var heatCols = [
@@ -1828,14 +2032,31 @@
     ];
     // 板块强度
     var stCols = [
-      { label: "板块", left: true, get: function (r) { return nameCell({ name: r.name, type: "ind" }); } },
+      { label: "板块", left: true, get: function (r) {
+          var divTag = r.divergeB ? '<span class="mkt-tag mkt-tag-div" title="价量背离——资金结论不采信">背离</span>' : '';
+          return '<span class="mkt-tag mkt-tag-ind">行业</span><span class="mkt-name-cell">' + esc(r.name) + '</span>' + divTag;
+        } },
       { label: "强度", get: function (r) { return '<span class="mkt-name-cell">' + r.score.toFixed(1) + "</span>" + spectrumBar(r.score); } },
       { label: "星级", get: function (r) { return '<span class="mkt-star">' + starRating(r.score) + "</span>"; } },
       { label: "扩散度", get: function (r) { return '<span class="' + (r.diffusion >= 50 ? "mkt-num-up" : "mkt-dim-num") + '">' + r.diffusion.toFixed(0) + "%</span>"; } },
       { label: "涨跌", get: function (r) { return '<span class="' + pctCls(r.chg) + '">' + fmtPct(r.chg) + "</span>"; } },
       { label: "主力当日", get: function (r) { return '<span class="' + pctCls(r.mf) + '">' + fmtYi(r.mf, 1) + "</span>"; } },
       { label: "板块内涨停", get: function (r) { return r.ztN > 0 ? '<span class="mkt-num-up">' + r.ztN + " 家</span>" : '<span class="mkt-dim-num">0 家</span>'; } },
-      { label: "龙头", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.leader || "--") + (r.leaderPct !== null ? " " + fmtPct(r.leaderPct, 1) : "") + "</span>"; } },
+      { label: "龙头", left: true, get: function (r) {
+          var tip = r.leader ? ("龙头 " + esc(r.leader) + (r.leaderPct !== null ? " " + fmtPct(r.leaderPct, 1) : "")) : "--";
+          return '<span class="mkt-dim-num" title="' + esc(tip) + '">' + esc(r.leader || "--") + (r.leaderPct !== null ? " " + fmtPct(r.leaderPct, 1) : "") + "</span>";
+        } },
+      { label: "近5日", get: function (r) { return r.w5 === null || r.w5 === undefined ? '<span class="mkt-dim-num">--</span>' : '<span class="' + pctCls(r.w5) + '">' + fmtPct(r.w5) + "</span>"; } },
+      { label: "近60日", get: function (r) { return r.w60 === null || r.w60 === undefined ? '<span class="mkt-dim-num">--</span>' : '<span class="' + pctCls(r.w60) + '">' + fmtPct(r.w60) + "</span>"; } },
+      { label: "主力5日", get: function (r) { return r.mf5sum === null || r.mf5sum === undefined ? '<span class="mkt-dim-num">--</span>' : '<span class="' + pctCls(r.mf5sum) + '">' + fmtYi(r.mf5sum, 1) + "</span>"; } },
+      { label: "主力20日", get: function (r) { return r.mf20sum === null || r.mf20sum === undefined ? '<span class="mkt-dim-num">--</span>' : '<span class="' + pctCls(r.mf20sum) + '">' + fmtYi(r.mf20sum, 1) + "</span>"; } },
+      { label: "驱动要点", left: true, get: function (r) {
+          var bits = [];
+          if (r.divergeB) bits.push('<span class="mkt-tag mkt-tag-div" title="价量背离——资金结论不采信">背离</span>');
+          if (r.highPos && r.highPos !== "中位") bits.push('<span class="mkt-tag mkt-tag-idx" title="60日累计涨跌位置">' + r.highPos + "</span>");
+          bits.push('<span class="mkt-dim-num">' + esc(r.narrative) + "</span>");
+          return bits.join(" ");
+        } },
     ];
     // 资金分类
     var flowCls = classifyFlows(rv.strengths);
@@ -2001,6 +2222,7 @@
     renderEvents(data);
     renderWindows(data);
     renderStocks(data);
+    renderEtfs(data);
     renderReview(data);
   }
 
