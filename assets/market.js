@@ -664,7 +664,7 @@
   // 个股日K（含成交额 f57；东财主源，空/失败→腾讯降级，降级序列无 amount/amp 由聚合层兜底）
   function fetchStockKline(secid, tx) {
     var path = "/api/qt/stock/kline/get?secid=" + secid +
-      "&fields1=f1,f2,f3&fields2=" + STOCK_KLINE_FIELDS2 + "&klt=101&fqt=1&beg=" + ymdShift(-50) + "&end=20500101";
+      "&fields1=f1,f2,f3&fields2=" + STOCK_KLINE_FIELDS2 + "&klt=101&fqt=1&beg=" + ymdShift(-420) + "&end=20500101";
     return fetchJsonp(path, KLINE_HOSTS).then(function (d) {
       var klines = d && d.data && d.data.klines || [];
       var bars = [];
@@ -698,6 +698,33 @@
     st.dates = [];
     for (var d = Math.max(0, bi - 20); d <= bi; d++) st.dates.push(kbars[d].date);
     st.ok = true;
+    // 六维性价比输入：MA/RSI/52周位置（由本股K线一次算成，只落结果不落序列）
+    var tech = { ma20: null, ma60: null, rsi12: null, pos52: null, hi52: null, lo52: null };
+    if (closes.length >= 20) {
+      var s20 = 0;
+      for (var m1 = closes.length - 20; m1 < closes.length; m1++) s20 += closes[m1];
+      tech.ma20 = s20 / 20;
+    }
+    if (closes.length >= 60) {
+      var s60 = 0;
+      for (var m2 = closes.length - 60; m2 < closes.length; m2++) s60 += closes[m2];
+      tech.ma60 = s60 / 60;
+    }
+    if (closes.length >= 14) {
+      var upS = 0, dnS = 0;
+      for (var m3 = closes.length - 13; m3 < closes.length; m3++) {
+        var chg = closes[m3] - closes[m3 - 1];
+        if (chg > 0) upS += chg; else dnS -= chg;
+      }
+      tech.rsi12 = (upS + dnS) > 0 ? upS / (upS + dnS) * 100 : 50;
+    }
+    var hh52 = -Infinity, ll52 = Infinity;
+    closes.forEach(function (x) { if (x > hh52) hh52 = x; if (x < ll52) ll52 = x; });
+    if (hh52 > ll52 && st.close !== null && !isNaN(st.close)) {
+      tech.hi52 = hh52; tech.lo52 = ll52;
+      tech.pos52 = (st.close - ll52) / (hh52 - ll52) * 100;
+    }
+    st.tech = tech;
     if (!fbars || !fbars.length) return;
     var fj = -1;
     for (var j = fbars.length - 1; j >= 0; j--) { if (fbars[j].date === state.baseDate) { fj = j; break; } }
@@ -763,7 +790,9 @@
         '<div class="mkt-sanki-wrap" id="mktSankeyWrap">' + skelCard(2) + "</div>" +
         '<div class="mkt-cards" id="mktWindowWrap" style="margin-top:14px">' + skelCard(4) + "</div>") +
       mktBlock("个股动向", "观察池资金流入与近20日对比（基准日口径）",
-        '<div id="mktStocksWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>");
+        '<div id="mktStocksWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>") +
+      mktBlock("每日复盘 · 自动生成", "阶段判定 · 赚钱效应 · 板块强度 · 观察点回验（每日进入自动重跑）",
+        '<div id="mktReviewWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(6) + "</div></div>");
   }
   function markFailBody(msg) {
     $("mktBody").innerHTML = '<section class="mkt-block"><div class="mkt-fail">' + msg + "</div></section>" +
@@ -973,6 +1002,18 @@
         });
       })).then(function () {
         renderStocks(state);
+      });
+    }).then(function () {
+      if (stale()) throw new Error("aborted");
+      // 阶段6：每日复盘（财务/估值快照/参照/两市成交 → 量化派生 → 观察点回验）
+      chipText("生成每日复盘…", true);
+      var prevDate = dashShift(state.baseDate, -1);
+      var prevP = fetch("/api/mkt/get?date=" + prevDate + "&provider=em", { cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+      return Promise.all([fetchReviewExtras(stale), prevP]).then(function (r) {
+        if (stale()) throw new Error("aborted");
+        buildReview(state, r[0], r[1]);
+        renderReview(state);
       });
     }).then(function () {
       if (stale()) throw new Error("aborted");
@@ -1233,6 +1274,445 @@
     b.mf5sum = s;
   }
 
+  /* ══════════ 每日复盘引擎（L3 量化派生 · 纯函数，缺失分项按剩余权重归一） ══════════ */
+  var TRACK_KEY = "hs300.mkt.tracking.v1";
+  var HS300_SECID = "1.000300";
+
+  function loadTracking() {
+    try { return JSON.parse(localStorage.getItem(TRACK_KEY) || "null"); } catch (e) { return null; }
+  }
+  function saveTracking(t) {
+    try { localStorage.setItem(TRACK_KEY, JSON.stringify(t)); } catch (e) {}
+  }
+
+  // 复盘专属补充数据：观察池F10财务 + 腾讯估值快照 + 沪深300参照 + 两市成交序列
+  function fetchReviewExtras(stale) {
+    var f10Filter = STOCKS.map(function (sx) {
+      return '(SECUCODE="' + sx.secid.slice(2) + "." + (sx.secid.charAt(0) === "1" ? "SH" : "SZ") + '")';
+    }).join("");
+    var f10P = fetchJsonp("/api/data/v1/get?reportName=RPT_F10_FINANCE_MAINFINADATA&columns=ALL&filter=" +
+      dcFilter(f10Filter + '(REPORT_TYPE=' + "'" + "报告期" + "'" + ')') +
+      "&sortColumns=REPORT_DATE&sortTypes=-1&pageSize=60&pageNumber=1", DC_HOSTS, 2, "callback")
+      .then(function (d) {
+        var rows = d && d.result && d.result.data || [];
+        var fund = {};
+        rows.forEach(function (r) {
+          var code = String(r.SECURITY_CODE || "");
+          var prev = fund[code];
+          if (!prev || String(r.REPORT_DATE) > prev.date) {
+            fund[code] = {
+              date: String(r.REPORT_DATE || "").slice(0, 10),
+              roe: num(r.ROEJQ), npTz: num(r.PARENTNETPROFITTZ), revTz: num(r.TOTALOPERATEREVETZ),
+              debt: num(r.ZCFZL), np: num(r.PARENTNETPROFIT), xjll: num(r.MGJYXJJE_JLRTM),
+            };
+          }
+        });
+        return fund;
+      }).catch(function () { return {}; });
+    var txP = fetchTxAmounts().then(function (a) {
+      // 复用批量快照通道：INDEXES 已含部分代码，这里单独拉观察池
+      return a;
+    }).catch(function () { return null; });
+    var txStockP = fetchTxStockQuotes().catch(function () { return {}; });
+    var hs300P = fetchKline(HS300_SECID, ymdShift(-30)).catch(function () { return []; });
+    var shP = fetchKline("1.000001", ymdShift(-40)).catch(function () { return []; });
+    var szP = fetchKline("0.399001", ymdShift(-40)).catch(function () { return []; });
+    return Promise.all([f10P, txStockP, hs300P, shP, szP]).then(function (r) {
+      if (stale()) return null;
+      return { fund: r[0], tx: r[1], hs300: r[2], shBars: r[3], szBars: r[4] };
+    });
+  }
+  // 观察池腾讯批量估值快照：[3]收盘 [32]涨跌幅 [39]PE-TTM [46]PB [49]股息率 [67]52周高 [68]52周低
+  function fetchTxStockQuotes() {
+    return new Promise(function (resolve) {
+      var s = document.createElement("script");
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; s.remove(); resolve({}); } }, 10000);
+      s.src = "https://qt.gtimg.cn/q=" + STOCKS.map(function (sx) { return sx.tx; }).join(",");
+      s.onload = function () {
+        if (done) return;
+        done = true; clearTimeout(to); s.remove();
+        var out = {};
+        STOCKS.forEach(function (sx) {
+          try {
+            var raw = window["v_" + sx.tx];
+            if (typeof raw !== "string") return;
+            var p = raw.split("~");
+            out[sx.key] = {
+              close: num(p[3]), pct: num(p[32]), pe: num(p[39]), pb: num(p[46]),
+              hi52: num(p[67]), lo52: num(p[68]),
+            };
+          } catch (e) {}
+        });
+        resolve(out);
+      };
+      s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); resolve({}); } };
+      document.head.appendChild(s);
+    });
+  }
+
+  // 量化：市场赚钱效应（缺失分项按剩余权重归一，绝不当 0 分）
+  function quantHeat(state, turnoverInfo) {
+    var upPct = state.boardUpPctReview;
+    var items = [
+      { k: "广度(板块上涨占比)", w: 0.30, raw: upPct, score: upPct },
+      { k: "涨跌停结构", w: 0.15, raw: null, score: null },
+      { k: "炸板率(逆向)", w: 0.10, raw: null, score: null },
+      { k: "量能变化", w: 0.10, raw: null, score: null },
+      { k: "指数表现(上证)", w: 0.10, raw: null, score: null },
+      { k: "中位数涨跌幅", w: 0.25, raw: null, score: null },
+    ];
+    var emo = state.emotion || {};
+    var zt = emo.zt, dt = emo.dt, zb = emo.zbRate;
+    if (zt !== null && zt !== undefined && dt !== null && dt !== undefined && (zt + dt) > 0) {
+      items[1].score = zt / (zt + dt) * 100;
+      items[1].raw = "涨停 " + zt + " / 跌停 " + dt;
+    }
+    if (zb !== null && zb !== undefined) {
+      items[2].score = 100 - zb;
+      items[2].raw = "炸板率 " + zb.toFixed(0) + "%";
+    }
+    if (turnoverInfo && turnoverInfo.ratio5 !== null) {
+      items[3].score = Math.max(0, Math.min(100, (turnoverInfo.ratio5 - 0.5) * 100));
+      items[3].raw = "成交额/5日均 " + turnoverInfo.ratio5.toFixed(3);
+    }
+    var shIdx = null;
+    state.indexes.forEach(function (r) { if (r.ix.key === "sh") shIdx = r; });
+    if (shIdx && shIdx.d0 !== null && shIdx.d0 !== undefined) {
+      items[4].score = Math.max(0, Math.min(100, (shIdx.d0 + 5) / 10 * 100));
+      items[4].raw = "上证 " + fmtPct(shIdx.d0);
+    }
+    // 中位数涨跌幅保持缺失（新浪/东财免费源不提供逐股中位数）
+    var coveredW = 0, wsum = 0, covered = 0;
+    items.forEach(function (it) {
+      if (it.score !== null && it.score !== undefined && !isNaN(it.score)) { coveredW += it.w; covered++; }
+      wsum += it.w;
+    });
+    var score = 0;
+    items.forEach(function (it) {
+      if (it.score !== null && it.score !== undefined && !isNaN(it.score)) score += it.score * it.w;
+    });
+    score = coveredW > 0 ? score / coveredW : 0;
+    items.forEach(function (it) {
+      it.contrib = (it.score !== null && it.score !== undefined && !isNaN(it.score) && coveredW > 0) ? it.score * it.w / coveredW : null;
+      it.state = (it.score === null || it.score === undefined) ? "缺失→归一" : "有效";
+    });
+    return { score: Math.round(score * 100) / 100, items: items, coverage: Math.round(coveredW / wsum * 100) / 100, covered: covered };
+  }
+  function heatBand(score) {
+    if (score >= 75) return "强";
+    if (score >= 60) return "偏强";
+    if (score >= 45) return "中性";
+    if (score >= 30) return "偏弱";
+    return "弱";
+  }
+  function starRating(score) {
+    var s = Math.max(0, Math.min(100, score));
+    var full = Math.floor(s / 20);
+    var half = (s % 20) >= 10;
+    var dots = 5 - full - (half ? 1 : 0);
+    var out = "";
+    for (var i = 0; i < full; i++) out += "★";
+    if (half) out += "☆";
+    for (var j = 0; j < dots; j++) out += "·";
+    return out;
+  }
+  // 量化：市场阶段判定（证据链直接引用输入值与触发规则）
+  function quantStage(heat, emo, turnoverInfo) {
+    var s = heat.score;
+    var zt = (emo && emo.zt) || 0, dt = (emo && emo.dt) || 0;
+    var stage, evid = [];
+    if (s < 30 && dt > zt) { stage = "退潮"; evid.push("赚钱效应 " + s + " <30，跌停 " + dt + " > 涨停 " + zt + " → 退潮"); }
+    else if (s < 30) { stage = "筑底"; evid.push("赚钱效应 " + s + " <30，跌停未占优 → 筑底观察"); }
+    else if (s >= 75) { stage = "高潮"; evid.push("赚钱效应 " + s + " ≥75 → 情绪高潮，警惕兑现"); }
+    else if (s >= 60 && turnoverInfo && turnoverInfo.ratio20 !== null && turnoverInfo.ratio20 > 1.1) { stage = "加速"; evid.push("赚钱效应 " + s + " ≥60 且成交额超20日均 " + turnoverInfo.ratio20.toFixed(2) + " 倍 → 加速"); }
+    else if (s >= 45) { stage = "上升"; evid.push("赚钱效应 " + s + " ≥45 → 中性偏强"); }
+    else { stage = "分歧"; evid.push("赚钱效应 " + s + " 在 30–45 区间 → 多空分歧"); }
+    if (turnoverInfo && turnoverInfo.ratio5 !== null) {
+      evid.push("成交额/5日均 " + turnoverInfo.ratio5.toFixed(3) + (turnoverInfo.ratio5 > 1 ? "（量增）" : "（量缩）"));
+    }
+    return { stage: stage, evid: evid };
+  }
+  // 量化：板块强度（扩散度优先，不看单一涨幅）
+  function quantSectorStrength(state) {
+    var hs300d0 = state.reviewHs300d0;
+    var out = [];
+    var cloud = state.cloud && state.cloud.boards || [];
+    cloud.forEach(function (cb) {
+      var b = state.boards[cb.code];
+      if (!b) return;
+      var n = cb.stocks.length, up = 0, zt = 0, maxp = null, maxn = "";
+      cb.stocks.forEach(function (s2) {
+        var p = s2.p;
+        if (p !== null && p !== undefined) {
+          if (p > 0) up++;
+          if (p >= 9.8) zt++;
+          if (maxp === null || p > maxp) { maxp = p; maxn = s2.n; }
+        }
+      });
+      var diffusion = n > 0 ? up / n * 100 : 0;
+      var amt = b.amt !== null && b.amt !== undefined ? b.amt : 0;
+      var mf = b.baseMf !== null && b.baseMf !== undefined ? b.baseMf : 0;
+      var fundRatio = amt > 0 ? mf / amt * 100 : 0;
+      // 技能精确公式（三一/电机/华为/工程机械四基准回归验证）：
+      var fundScore = Math.max(0, Math.min(100, (fundRatio + 5) * 10));
+      var excess = (b.basePct !== null && b.basePct !== undefined && hs300d0 !== null) ? b.basePct - hs300d0 : null;
+      var excessScore = excess !== null ? Math.max(0, Math.min(100, (excess + 5) * 10)) : 0;
+      var ztScore = n > 0 ? Math.min(100, (zt / n) * 1000) : 0;
+      var leaderScore = maxp !== null ? Math.max(0, Math.min(100, maxp * 10)) : 0;
+      var score = diffusion * 0.30 + fundScore * 0.20 + excessScore * 0.20 + ztScore * 0.15 + leaderScore * 0.15;
+      out.push({
+        code: cb.code, name: cb.name, score: Math.round(score * 10) / 10,
+        diffusion: diffusion, upN: up, n: n, chg: b.basePct, mf: mf,
+        amt: amt, ztN: zt, leader: maxn, leaderPct: maxp,
+      });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out;
+  }
+  // 量化：观察池个股六维性价比（估值/52周位置/基本面/资金/融资/情绪趋势）
+  function quantStocks(state, extras) {
+    var out = [];
+    Object.keys(state.stocks).forEach(function (k) {
+      var st = state.stocks[k];
+      if (!st || !st.ok) return;
+      var closes = st.cmp || [];
+      var sx = st.sx;
+      var f10 = extras && extras.fund ? extras.fund[sx.secid.slice(2)] : null;
+      var txv = extras && extras.tx ? extras.tx[sx.tx] : null;
+      // 52周位置：close 在 [lo52, hi52] 的百分位（腾讯快照；缺失时用本地K线高低）
+      var pos52 = null, hi52 = null, lo52 = null;
+      if (txv && txv.hi52 !== null && txv.lo52 !== null && txv.close !== null) {
+        hi52 = txv.hi52; lo52 = txv.lo52;
+        if (hi52 > lo52) pos52 = (st.close - lo52) / (hi52 - lo52) * 100;
+      } else if (st.kbars && st.kbars.length > 40) {
+        var hh = -Infinity, ll = Infinity;
+        st.kbars.forEach(function (b) { if (b.close > hh) hh = b.close; if (b.close < ll) ll = b.close; });
+        if (hh > ll) { hi52 = hh; lo52 = ll; pos52 = (st.close - ll) / (hh - ll) * 100; }
+      }
+      // 技术序列已在 aggStock 落到 st.tech（缓存友好）
+      var tech = st.tech || {};
+      var ma20 = tech.ma20, ma60 = tech.ma60, rsi12 = tech.rsi12;
+      var pxMa20 = (st.close !== null && ma20) ? (st.close / ma20 - 1) * 100 : null;
+      var pxMa60 = (st.close !== null && ma60) ? (st.close / ma60 - 1) * 100 : null;
+      // 资金分：当日 + 5日累计（近似口径）
+      var mf0 = st.baseMf !== null && st.baseMf !== undefined ? st.baseMf : null;
+      var fundScore = mf0 !== null ? Math.max(0, Math.min(100, 50 + mf0 / 1e8 * 15)) : null;
+      // 情绪趋势分
+      var emoScore = null;
+      if (pxMa20 !== null) {
+        emoScore = 50 + pxMa20 * 3 + (pxMa60 !== null ? pxMa60 : 0) + (rsi12 !== null ? (rsi12 - 50) * 0.6 : 0);
+        emoScore = Math.max(0, Math.min(100, emoScore));
+      }
+      // 基本面分（近似口径：ROE×4 + 净利同比迁移 + 负债反向）
+      var fundaScore = null;
+      if (f10 && f10.roe !== null) {
+        fundaScore = Math.max(0, Math.min(100, 40 + f10.roe * 4 +
+          (f10.npTz !== null ? Math.max(-30, Math.min(30, f10.npTz * 0.3)) : 0) +
+          (f10.debt !== null ? Math.max(-10, Math.min(10, 60 - f10.debt * 0.3)) : 0)));
+      }
+      var posScore = pos52 !== null ? 100 - pos52 : null;
+      // 六维加权：估值20%（免费源无历史分位 → 缺失归一）/ 位置15% / 基本面25% / 资金15% / 融资10%缺失 / 情绪15%
+      var dims = [
+        { k: "估值分位", w: 0.20, raw: txv && txv.pe !== null ? "PE-TTM " + txv.pe : (txv && txv.pb !== null ? "PB " + txv.pb : null), score: null, note: "免费源无历史分位 → 缺失" },
+        { k: "52周位置", w: 0.15, raw: pos52 !== null ? pos52.toFixed(1) + "%" : null, score: posScore },
+        { k: "基本面", w: 0.25, raw: f10 && f10.roe !== null ? "ROE " + f10.roe + "%" + (f10.npTz !== null ? " / 净利同比 " + f10.npTz + "%" : "") : null, score: fundaScore },
+        { k: "资金", w: 0.15, raw: mf0 !== null ? "当日 " + fmtYi(mf0, 2) : null, score: fundScore },
+        { k: "融资", w: 0.10, raw: null, score: null, note: "两融源待接入 → 缺失" },
+        { k: "情绪趋势", w: 0.15, raw: pxMa20 !== null ? "对MA20 " + fmtPct(pxMa20, 1) : null, score: emoScore },
+      ];
+      var cw = 0, tw = 0, sc = 0, covered = 0;
+      dims.forEach(function (d2) {
+        if (d2.score !== null && d2.score !== undefined && !isNaN(d2.score)) { cw += d2.w; covered++; }
+        tw += d2.w;
+      });
+      dims.forEach(function (d2) {
+        d2.contrib = (d2.score !== null && d2.score !== undefined && !isNaN(d2.score) && cw > 0) ? d2.score * d2.w / cw : null;
+      });
+      var total = cw > 0 ? Math.round(dims.reduce(function (a, d2) {
+        return a + (d2.contrib !== null ? d2.contrib : 0);
+      }, 0) * 10) / 10 : null;
+      var coverage = Math.round(cw / tw * 100) / 100;
+      var roeNeg = f10 && f10.roe !== null && f10.roe < 0;
+      out.push({
+        key: k, name: st.name, color: st.color, close: st.close, d0: st.d0, w5: st.w5, w20: st.w20,
+        score: total, coverage: coverage, dims: dims, roeNeg: roeNeg,
+        pos52: pos52, hi52: hi52, lo52: lo52, ma20: ma20,
+        f10: f10, baseMf: st.baseMf, mf5sum: st.mf5sum, flowStreak: st.flowStreak,
+      });
+    });
+    out.sort(function (a, b) { return (b.score || 0) - (a.score || 0); });
+    return out;
+  }
+  // 量化：风险清单（规则生成，P0/P1/P2）
+  function quantRisks(state, heat, turnoverInfo, strengths, stockSix) {
+    var out = [];
+    var shIdx = null;
+    state.indexes.forEach(function (r) { if (r.ix.key === "sh") shIdx = r; });
+    var upPct = state.boardUpPctReview;
+    var emo = state.emotion || {};
+    if (turnoverInfo && turnoverInfo.ratio5 !== null && turnoverInfo.ratio5 > 1 && shIdx && shIdx.d0 !== null && shIdx.d0 < 0) {
+      out.push({ p: "P0", cat: "量价背离", fact: "成交额/5日均 " + turnoverInfo.ratio5.toFixed(3) + "，上证 " + fmtPct(shIdx.d0) + "、板块上涨占比 " + (upPct === null ? "--" : upPct.toFixed(0) + "%") + " → 放量下跌", act: "明日量增而广度不回升，视为二次释放" });
+    }
+    if (emo.dt && emo.zt && emo.dt > emo.zt) {
+      out.push({ p: "P0", cat: "广度风险", fact: "跌停 " + emo.dt + " 家 vs 涨停 " + emo.zt + " 家", act: "跌停未收敛前，不做趋势性加仓" });
+    }
+    var bleed = strengths.filter(function (s2) { return s2.mf < -50e8; })[0];
+    if (bleed) out.push({ p: "P1", cat: "板块资金失血", fact: bleed.name + " 当日主力 " + fmtYi(bleed.mf, 1), act: "该方向反弹缺乏资金基础" });
+    if (upPct !== null && upPct < 20) {
+      out.push({ p: "P1", cat: "广度风险", fact: "板块上涨占比 " + upPct.toFixed(0) + "%", act: "普涨不成立，抱团行情注意权重回落" });
+    }
+    var roeNeg = stockSix.filter(function (s2) { return s2.roeNeg; });
+    roeNeg.forEach(function (s2) {
+      out.push({ p: "P2", cat: "个股基本面", fact: s2.name + " ROE 为负（基本面恶化）", act: "估值不构成买入理由，不设交易参数" });
+    });
+    out.push({ p: "P2", cat: "数据风险", fact: "逐股涨跌幅中位数缺失；免费源无估值历史分位；两融待接入", act: "结论置信度相应下调，缺失项不填充" });
+    return out;
+  }
+  // 观察点生成（指标路径机器可判定）+ 昨日回验
+  function buildObservations(state, heat, turnoverInfo, strengths, stockSix, prevTracking) {
+    var pts = [];
+    var shIdx = null;
+    state.indexes.forEach(function (r) { if (r.ix.key === "sh") shIdx = r; });
+    if (heat.score !== null) pts.push({ path: "market.heat_score", label: "赚钱效应修复至45以上", cond: "≥ 45", test: function (h) { return h.score !== null && h.score >= 45; } });
+    if (turnoverInfo && turnoverInfo.avg20 !== null) pts.push({ path: "market.turnover_yi", label: "两市成交额回到20日均上方", cond: "≥ " + turnoverInfo.avg20.toFixed(0) + " 亿", test: function (h) { return h.turnover !== null && h.turnover >= turnoverInfo.avg20; } });
+    var emo = state.emotion || {};
+    if (emo.dt) pts.push({ path: "market.limit_down", label: "跌停家数收敛至20家以内", cond: "≤ 20", test: function (h) { return h.dt !== null && h.dt <= 20; } });
+    var top1 = strengths[0];
+    if (top1) pts.push({ path: "sectors." + top1.name + ".diffusion", label: top1.name + " 扩散度回到50%以上", cond: "≥ 50", test: function (h) { var t2 = h.topSector; return t2 !== null && t2 >= 50; } });
+    stockSix.slice(0, 3).forEach(function (s2) {
+      if (s2.ma20 !== null && s2.close !== null) {
+        pts.push({ path: "stocks." + s2.name + ".ma20", label: s2.name + " 收盘站上MA20(" + s2.ma20.toFixed(2) + ")", cond: "≥ MA20", test: function (h) { return h.stockCloses[s2.name] !== null && h.stockCloses[s2.name] >= s2.ma20; } });
+      }
+    });
+    // 回验：昨日观察点用今日快照逐条判定
+    var verified = [];
+    if (prevTracking && prevTracking.points && prevTracking.baseDate !== state.baseDate) {
+      prevTracking.points.forEach(function (p2) {
+        var result = "待观察";
+        var curVal = null;
+        if (p2.path === "market.heat_score") curVal = heat.score;
+        else if (p2.path === "market.turnover_yi") curVal = turnoverInfo ? turnoverInfo.turnover : null;
+        else if (p2.path === "market.limit_down") curVal = emo.dt;
+        else if (p2.path.indexOf("sectors.") === 0) curVal = state.reviewTopSectorDiff;
+        else if (p2.path.indexOf("stocks.") === 0) {
+          var nm = p2.path.split(".")[1];
+          var st2 = state.stockCloses[nm];
+          curVal = st2 !== undefined ? st2 : null;
+        }
+        if (curVal !== null && curVal !== undefined && p2.cond !== "待观察") {
+          var m = /([<>≤≥])\s*([\d.]+)/.exec(p2.cond);
+          if (m) {
+            var op = m[1], th = parseFloat(m[2]);
+            result = (op === ">=" || op === ">") ? (curVal >= th ? "兑现" : "未兑现")
+                   : (curVal <= th ? "兑现" : "未兑现");
+          } else result = "待观察";
+        }
+        verified.push({ label: p2.label, cond: p2.cond, result: result, cur: curVal });
+      });
+    }
+    return { newPts: pts, verified: verified };
+  }
+
+  // 复盘编排：补充数据（财务/估值快照/参照）→ 量化派生 → 组装 review 对象
+  function buildReview(state, extras, prevSnap) {
+    var list = [];
+    Object.keys(state.boards).forEach(function (c) { list.push(state.boards[c]); });
+    state.boardUpPctReview = boardUpPctOf(list);
+    // 两市成交序列（上证+深证按日期对齐相加，5日/20日均均含今日）
+    var turnoverInfo = { turnover: null, ratio5: null, ratio20: null, avg5: null, avg20: null };
+    var shB = extras.shBars || [], szB = extras.szBars || [];
+    var map = {};
+    shB.forEach(function (b) { map[b.date] = b; });
+    var series = [];
+    szB.forEach(function (b) {
+      var m = map[b.date];
+      if (m && m.amount && b.amount) series.push({ date: b.date, amt: m.amount + b.amount });
+    });
+    var bi = -1;
+    for (var i0 = series.length - 1; i0 >= 0; i0--) { if (series[i0].date === state.baseDate) { bi = i0; break; } }
+    if (bi < 0 && series.length) bi = series.length - 1;
+    if (bi >= 0) {
+      turnoverInfo.turnover = series[bi].amt;
+      var s5 = 0, c5 = 0, s20 = 0, c20 = 0;
+      for (var j = bi; j >= 0 && c5 < 5; j--, c5++) s5 += series[j].amt;
+      for (var k = bi; k >= 0 && c20 < 20; k--, c20++) s20 += series[k].amt;
+      turnoverInfo.avg5 = c5 > 0 ? s5 / c5 : null;
+      turnoverInfo.avg20 = c20 > 0 ? s20 / c20 : null;
+      turnoverInfo.ratio5 = turnoverInfo.avg5 ? turnoverInfo.turnover / turnoverInfo.avg5 : null;
+      turnoverInfo.ratio20 = turnoverInfo.avg20 ? turnoverInfo.turnover / turnoverInfo.avg20 : null;
+    }
+    // 沪深300参照（板块超额的基准）
+    var hs = extras.hs300 || [];
+    var hbi = -1;
+    for (var h = hs.length - 1; h >= 0; h--) { if (hs[h].date === state.baseDate) { hbi = h; break; } }
+    if (hbi >= 0 && hs[hbi].pct !== null) state.reviewHs300d0 = hs[hbi].pct;
+    else if (hbi > 0 && hs[hbi - 1] && hs[hbi].close && hs[hbi - 1].close) state.reviewHs300d0 = (hs[hbi].close / hs[hbi - 1].close - 1) * 100;
+    var heat = quantHeat(state, turnoverInfo);
+    var stage = quantStage(heat, state.emotion, turnoverInfo);
+    var strengths = quantSectorStrength(state);
+    state.reviewTopSectorDiff = strengths.length ? strengths[0].diffusion : null;
+    var stockSix = quantStocks(state, extras);
+    var risks = quantRisks(state, heat, turnoverInfo, strengths, stockSix);
+    // 观察点：昨日回验 + 今日生成（tracking 只在基准日切换时覆盖）
+    var prevT = (prevSnap && prevSnap.tracking) ? prevSnap.tracking : loadTracking();
+    var obs = buildObservations(state, heat, turnoverInfo, strengths, stockSix, prevT);
+    // 变化量（vs 上一交易日快照）：可比才对比，不可比不推测
+    var changes = [];
+    if (prevSnap && prevSnap.review) {
+      var pv = prevSnap.review;
+      var curEmo = state.emotion || {};
+      var prevEmo = prevSnap.emotion || {};
+      if (pv.heat) changes.push({ k: "赚钱效应分", today: heat.score, prev: pv.heat.score, delta: (heat.score || 0) - ((pv.heat.score) || 0), unit: "分" });
+      if (prevEmo.zt !== null && curEmo.zt !== null) changes.push({ k: "涨停家数", today: curEmo.zt, prev: prevEmo.zt, delta: curEmo.zt - prevEmo.zt, unit: "家" });
+      if (prevEmo.dt !== null && curEmo.dt !== null) changes.push({ k: "跌停家数", today: curEmo.dt, prev: prevEmo.dt, delta: curEmo.dt - prevEmo.dt, unit: "家" });
+      if (pv.turnoverInfo && pv.turnoverInfo.turnover !== null && turnoverInfo.turnover !== null) {
+        changes.push({ k: "两市成交额", today: (turnoverInfo.turnover / 1e8).toFixed(0) + "亿", prev: (pv.turnoverInfo.turnover / 1e8).toFixed(0) + "亿",
+          delta: turnoverInfo.turnover - pv.turnoverInfo.turnover, unit: "亿" });
+      }
+      changes.forEach(function (c2) {
+        c2.deltaTxt = c2.delta > 0 ? "+" + (Math.round(Math.abs(c2.delta) * 100) / 100) + " " + c2.unit
+          : (c2.delta < 0 ? "-" + (Math.round(Math.abs(c2.delta) * 100) / 100) + " " + c2.unit : "持平");
+      });
+    }
+    // 背离板块（价量方向冲突，闸门与提示共用一份数据）
+    var diverge = [];
+    Object.keys(state.boards).forEach(function (code) {
+      var b = state.boards[code];
+      if (b.basePct === null || b.baseMf === null || b.baseMf === undefined) return;
+      if ((b.basePct > 0 && b.baseMf < 0) || (b.basePct < 0 && b.baseMf > 0)) {
+        diverge.push({ name: b.name, chg: b.basePct, mf: b.baseMf });
+      }
+    });
+    // 观察池收盘值映射（观察点回验用）
+    state.stockCloses = {};
+    Object.keys(state.stocks).forEach(function (k) {
+      var st2 = state.stocks[k];
+      state.stockCloses[st2.name] = st2.close;
+    });
+    state.review = {
+      baseDate: state.baseDate,
+      heat: heat, stage: stage, strengths: strengths.slice(0, 10),
+      stockSix: stockSix, risks: risks, obs: obs,
+      turnoverInfo: turnoverInfo, boardUpPct: state.boardUpPctReview,
+      divergence: diverge, changes: changes,
+      topSector: strengths.length ? strengths[0].name : null,
+      topSectorDiff: state.reviewTopSectorDiff,
+      generatedAt: Date.now(),
+    };
+    // 今日观察点写入 tracking（下一交易日进入时自动回验）
+    saveTracking({
+      baseDate: state.baseDate,
+      generatedAt: Date.now(),
+      points: obs.newPts.map(function (p2) { return { path: p2.path, label: p2.label, cond: p2.cond }; }),
+      snapshot: {
+        heat: heat.score, zt: (state.emotion || {}).zt || null, dt: (state.emotion || {}).dt || null,
+        topSectorDiff: state.reviewTopSectorDiff,
+        stockCloses: state.stockCloses,
+      },
+    });
+  }
+
   // YTD 基准日精确值：含今日的年初至今 ÷ (1+今日涨跌幅)
   function ytdBase(b, inSession) {
     if (b.ytdf === null || b.ytdf === undefined) return null;
@@ -1256,6 +1736,7 @@
       emotion: state.emotion || null, txKline: !!state.txKline,
       stocks: state.stocks || null,
       cloud: state.cloud || null,
+      review: state.review || null,
       events: state.events || null,
       klineOkN: list.filter(function (b) { return b.klineOk; }).length,
       flowExactN: list.filter(function (b) { return b.flowExact; }).length,
@@ -1286,6 +1767,181 @@
 
   /* ─────────── 渲染 ─────────── */
   /* ─────────── 事件与风险雷达渲染（龙虎榜 / 解禁 / 业绩预告） ─────────── */
+  /* ─────────── 每日复盘渲染（L4 结论与证据链 + L5 资金分类 · 观察点 · 变化量） ─────────── */
+  function spectrumBar(score) {
+    if (score === null || score === undefined || isNaN(score)) return '<span class="mkt-dim-num">--</span>';
+    return '<span class="mkt-spec"><span class="mkt-spec-pin" style="left:' + Math.max(0, Math.min(100, score)).toFixed(0) + '%"></span></span>';
+  }
+  // 资金分类与风格（规则生成：主线/防御/轮动/兑现）
+  function classifyFlows(strengths) {
+    var out = [];
+    strengths.forEach(function (s2) {
+      var mf = s2.mf, mf5 = 0, diffusion = s2.diffusion;
+      if (mf === null || mf === undefined) return;
+      if (s2.score >= 60 && diffusion >= 50 && mf > 0) {
+        out.push({ type: "主线流入", name: s2.name, ev: s2.name + " 强度 " + s2.score + " · 扩散 " + diffusion.toFixed(0) + "% · 主力 " + fmtYi(mf, 1), cls: "mkt-num-up" });
+      } else if (mf > 0 && diffusion < 30) {
+        out.push({ type: "防御性流入", name: s2.name, ev: s2.name + " 扩散仅 " + diffusion.toFixed(0) + "%，属权重护盘", cls: "mkt-dim-num" });
+      } else if (mf > 0) {
+        out.push({ type: "轮动性流入", name: s2.name, ev: s2.name + " 当日回流，扩散 " + diffusion.toFixed(0) + "%，持续性待确认", cls: "mkt-dim-num" });
+      }
+    });
+    strengths.slice().reverse().forEach(function (s2) {
+      if (s2.mf < -30e8) {
+        out.push({ type: "高位兑现", name: s2.name, ev: s2.name + " 当日主力 " + fmtYi(s2.mf, 1) + "（净流出居前）", cls: "mkt-num-down" });
+      }
+    });
+    return out.slice(0, 8);
+  }
+  function renderReview(data) {
+    var host = $("mktReviewWrap");
+    if (!host) return;
+    if (!cap().flow || !cap().cloud) {
+      host.innerHTML = capNote("每日复盘（赚钱效应/板块强度/观察点需东财源的成分与资金数据）");
+      return;
+    }
+    var rv = data.review;
+    if (!rv || !rv.heat) {
+      host.innerHTML = '<div class="mkt-fail">复盘需东财源全量数据（板块成分/资金流/情绪池），当前数据不足——稍后刷新或切换数据源。</div>';
+      return;
+    }
+    var heat = rv.heat;
+    var html = "";
+    // 结论与证据链
+    html += '<div class="mkt-card rv-concl"><h4>结论 · 市场阶段：<span class="mkt-name-cell" style="font-size:16px">' + esc(rv.stage.stage) + "</span>" +
+      '<span class="mkt-dim" style="margin-left:10px">置信度 ' + (rv.heat.coverage >= 0.8 ? "高" : (rv.heat.coverage >= 0.6 ? "中" : "低")) +
+      "（覆盖率 " + Math.round(rv.heat.coverage * 100) + "%）</span></h4><ul class=\"rv-evid\">";
+    rv.stage.evid.forEach(function (e2) { html += "<li>" + esc(e2) + "</li>"; });
+    html += "</ul>";
+    html += '<div class="rv-heatrow"><span class="rv-k">赚钱效应</span>' + spectrumBar(heat.score) +
+      '<span class="mkt-name-cell" style="margin-left:10px">' + heat.score + " / 100 · " + heatBand(heat.score) + "</span></div>";
+    html += "</div>";
+    // 赚钱效应评分表
+    var heatRows = heat.items.map(function (it) { return it; });
+    var heatCols = [
+      { label: "分项", left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.k) + "</span>"; } },
+      { label: "权重", get: function (r) { return '<span class="mkt-dim-num">' + Math.round(r.w * 100) + "%</span>"; } },
+      { label: "得分", get: function (r) { return r.score === null ? '<span class="mkt-dim-num">缺失</span>' : '<span class="mkt-name-cell">' + r.score.toFixed(1) + "</span>"; } },
+      { label: "贡献", get: function (r) { return r.contrib === null ? '<span class="mkt-dim-num">--</span>' : '<span class="mkt-dim-num">' + r.contrib.toFixed(1) + "</span>"; } },
+      { label: "原始值", left: true, get: function (r) { return r.raw === null ? '<span class="mkt-dim-num">缺失→归一</span>' : esc(r.raw); } },
+      { label: "状态", get: function (r) { return '<span class="mkt-dim-num">' + esc(r.state) + "</span>"; } },
+    ];
+    // 板块强度
+    var stCols = [
+      { label: "板块", left: true, get: function (r) { return nameCell({ name: r.name, type: "ind" }); } },
+      { label: "强度", get: function (r) { return '<span class="mkt-name-cell">' + r.score.toFixed(1) + "</span>" + spectrumBar(r.score); } },
+      { label: "星级", get: function (r) { return '<span class="mkt-star">' + starRating(r.score) + "</span>"; } },
+      { label: "扩散度", get: function (r) { return '<span class="' + (r.diffusion >= 50 ? "mkt-num-up" : "mkt-dim-num") + '">' + r.diffusion.toFixed(0) + "%</span>"; } },
+      { label: "涨跌", get: function (r) { return '<span class="' + pctCls(r.chg) + '">' + fmtPct(r.chg) + "</span>"; } },
+      { label: "主力当日", get: function (r) { return '<span class="' + pctCls(r.mf) + '">' + fmtYi(r.mf, 1) + "</span>"; } },
+      { label: "板块内涨停", get: function (r) { return r.ztN > 0 ? '<span class="mkt-num-up">' + r.ztN + " 家</span>" : '<span class="mkt-dim-num">0 家</span>'; } },
+      { label: "龙头", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.leader || "--") + (r.leaderPct !== null ? " " + fmtPct(r.leaderPct, 1) : "") + "</span>"; } },
+    ];
+    // 资金分类
+    var flowCls = classifyFlows(rv.strengths);
+    var fcCols = [
+      { label: "类型", left: true, get: function (r) { return '<span class="' + r.cls + '">' + esc(r.type) + "</span>"; } },
+      { label: "依据", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.ev) + "</span>"; } },
+    ];
+    // 风险清单
+    var riskCols = [
+      { label: "级", get: function (r) { return '<span class="mkt-tag ' + (r.p === "P0" ? "mkt-tag-div" : r.p === "P1" ? "mkt-tag-ind" : "mkt-tag-con") + '">' + esc(r.p) + "</span>"; } },
+      { label: "类别", left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.cat) + "</span>"; } },
+      { label: "事实", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.fact) + "</span>"; } },
+      { label: "触发/应对", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.act) + "</span>"; } },
+    ];
+    // 个股六维
+    var sixCols = [
+      { label: "个股", left: true, get: function (r) {
+          return '<span class="mkt-dot" style="background:' + (r.color || "#8a96b0") + '"></span><span class="mkt-name-cell">' + esc(r.name) + "</span>";
+        } },
+      { label: "总分", get: function (r) { return '<span class="mkt-name-cell">' + (r.score === null ? "--" : r.score.toFixed(1)) + "</span>"; } },
+      { label: "星级", get: function (r) { return '<span class="mkt-star">' + (r.score === null ? "--" : starRating(r.score)) + "</span>"; } },
+      { label: "52周位置", get: function (r) { return (r.pos52 === null ? "--" : spectrumBar(100 - r.pos52) + '<span class="mkt-dim-num" style="margin-left:6px">' + (100 - r.pos52).toFixed(0) + "%</span>"); } },
+      { label: "基本面", get: function (r) {
+          if (!r.f10 || r.f10.roe === null) return '<span class="mkt-dim-num">缺失</span>';
+          return '<span class="' + pctCls(r.f10.roe) + '">ROE ' + r.f10.roe + "%</span>";
+        } },
+      { label: "资金", get: function (r) { return '<span class="' + pctCls(r.baseMf) + '">' + fmtYi(r.baseMf, 1) + "</span>"; } },
+      { label: "情绪", get: function (r) { return r.dims[5].score === null ? '<span class="mkt-dim-num">--</span>' : '<span class="mkt-name-cell">' + r.dims[5].score.toFixed(0) + "</span>"; } },
+      { label: "置信", get: function (r) { return '<span class="mkt-dim-num">' + Math.round(r.coverage * 100) + "%</span>"; } },
+    ];
+    // 可执行参数
+    var paramRows = [];
+    rv.stockSix.forEach(function (s2) {
+      if (s2.roeNeg) {
+        paramRows.push({ name: s2.name, close: s2.close, stop: "不设", entry: "不设", target: "不设", why: "基本面恶化 / ROE 为负 → 不列为可交易标的" });
+        return;
+      }
+      var hi52 = s2.hi52, lo52 = s2.lo52, close = s2.close;
+      var piv20 = null;
+      if (s2.low20 !== null) piv20 = s2.low20;
+      var stop = null;
+      var pos20Price = (hi52 !== null && lo52 !== null) ? lo52 + (hi52 - lo52) * 0.2 : null;
+      if (pos20Price !== null && pos20Price < close) stop = pos20Price;
+      if (s2.low20 !== null && s2.low20 < close && (stop === null || close - s2.low20 < close - stop)) stop = s2.low20;
+      paramRows.push({
+        name: s2.name, close: close,
+        stop: stop !== null ? stop.toFixed(2) + "（" + ((stop / close - 1) * 100).toFixed(1) + "%）" : "不设",
+        entry: stop !== null ? (close * 0.97).toFixed(2) + " ~ " + (close * 0.94).toFixed(2) : "不设",
+        target: hi52 !== null ? hi52.toFixed(2) + "（52周高点方向）" : "不设",
+        why: stop !== null ? "止损=近20日低点与52周20%分位价中低于现价且更近者；介入=现价下方3%-6%" : "锚点缺失",
+      });
+    });
+    var paramCols = [
+      { label: "标的", left: true, get: function (r) { return '<span class="mkt-name-cell">' + esc(r.name) + "</span>"; } },
+      { label: "现价", get: function (r) { return '<span class="mkt-name-cell">' + (r.close === null ? "--" : r.close.toFixed(2)) + "</span>"; } },
+      { label: "止损位", get: function (r) { return '<span class="' + (r.stop === "不设" ? "mkt-dim-num" : "mkt-num-down") + '">' + r.stop + "</span>"; } },
+      { label: "介入区间", get: function (r) { return '<span class="mkt-dim-num">' + r.entry + "</span>"; } },
+      { label: "目标", get: function (r) { return '<span class="mkt-num-up">' + r.target + "</span>"; } },
+      { label: "锚点说明", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.why) + "</span>"; } },
+    ];
+    // 观察点回验
+    var obsCols = [
+      { label: "观察点", left: true, get: function (r) { return esc(r.label); } },
+      { label: "判定条件", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.cond) + "</span>"; } },
+      { label: "结果", get: function (r) {
+          var cls = r.result === "兑现" ? "mkt-num-up" : r.result === "未兑现" ? "mkt-num-down" : "mkt-dim-num";
+          return '<span class="' + cls + '">' + esc(r.result) + "</span>";
+        } },
+    ];
+    var obsRows = rv.obs.verified.length ? rv.obs.verified : null;
+    var newPts = rv.obs.newPts.map(function (p2) { return { label: p2.label, cond: p2.cond }; });
+    var newCols = [
+      { label: "观察点", left: true, get: function (r) { return esc(r.label); } },
+      { label: "判定条件", left: true, get: function (r) { return '<span class="mkt-dim-num">' + esc(r.cond) + "</span>"; } },
+    ];
+    // 变化量
+    var chgRows = rv.changes;
+    var chgCols = [
+      { label: "指标", left: true, get: function (r) { return esc(r.k); } },
+      { label: "今日", get: function (r) { return '<span class="mkt-name-cell">' + esc(r.today) + "</span>"; } },
+      { label: "昨日", get: function (r) { return '<span class="mkt-dim-num">' + esc(r.prev) + "</span>"; } },
+      { label: "变化", get: function (r) { return '<span class="' + pctCls(r.delta) + '">' + esc(r.deltaTxt) + "</span>"; } },
+    ];
+    html += mktBlock("赚钱效应评分", "覆盖率 " + Math.round(heat.coverage * 100) + "% · 缺失分项按剩余权重归一，绝不当 0 分",
+      '<div class="mkt-card">' + rankTable(heatRows, heatCols) + spectrumBar(heat.score) + "</div>");
+    html += mktBlock("板块强度 TOP10", "扩散度优先（权重30%），不看单一涨幅——防权重拉指数误判",
+      '<div class="mkt-card">' + (rv.strengths.length ? rankTable(rv.strengths.slice(0, 10), stCols) : '<div class="mkt-fail">暂无板块强度数据</div>') + "</div>");
+    html += mktBlock("资金分类与风格", "主线流入 / 防御性流入 / 轮动性流入 / 高位兑现",
+      '<div class="mkt-card">' + (flowCls.length ? rankTable(flowCls, fcCols) : '<div class="mkt-fail">暂无资金分类数据</div>') + "</div>");
+    html += mktBlock("风险清单", "P0/P1/P2 规则生成——用于提前排雷，而非收盘后追热点",
+      '<div class="mkt-card">' + rankTable(rv.risks, riskCols) + "</div>");
+    html += mktBlock("观察池 · 个股六维性价比", "估值 / 52周位置 / 基本面 / 资金 / 融资 / 情绪趋势（估值分位缺失→归一，ROE为负→不设参数）",
+      '<div class="mkt-card">' + rankTable(rv.stockSix, sixCols) + "</div>");
+    html += mktBlock("可执行参数", "止损 = 近20日低点与52周20%分位价取低更近者 · 介入 = 现价下方3%-6% · 目标 = 52周高点方向",
+      '<div class="mkt-card">' + rankTable(paramRows, paramCols) + "</div>");
+    html += mktBlock("观察点回验与今日观察点", "昨日观察点自动回验（兑现/未兑现）——昨日判断错误在本节明说",
+      '<div class="mkt-cards">' +
+      '<div class="mkt-card"><h4>昨日观察点回验</h4>' + (obsRows ? rankTable(obsRows, obsCols) : '<div class="mkt-fail">无上一交易日观察点（首次运行）——今日观察点已生成，下一交易日自动回验。</div>') + "</div>" +
+      '<div class="mkt-card"><h4>今日观察点</h4>' + rankTable(newPts, newCols) + "</div>" +
+      "</div>");
+    if (chgRows.length) {
+      html += mktBlock("变化量（vs 上一交易日快照）", "不可比指标不推测、不填值",
+        '<div class="mkt-card">' + rankTable(chgRows, chgCols) + "</div>");
+    }
+    host.innerHTML = html;
+  }
   function yjygTypeCls(t) {
     if (!t) return "mkt-dim-num";
     if (t.indexOf("预增") >= 0 || t.indexOf("扭亏") >= 0 || t.indexOf("略增") >= 0) return "mkt-num-up";
@@ -1345,6 +2001,7 @@
     renderEvents(data);
     renderWindows(data);
     renderStocks(data);
+    renderReview(data);
   }
 
   function sparkSvg(closes, w20) {
@@ -2147,5 +2804,5 @@
   });
 
   // 调试钩子：控制台可注入 mock 数据验证渲染管线（window.__mktDebug.renderAll(data)）
-  window.__mktDebug = { renderAll: renderAll, ensureSkeleton: ensureSkeleton, approxBase: approxBase, afterClose: afterClose, loadMarket: loadMarket, fetchEvents: fetchEvents, fetchJsonp: fetchJsonp, fetchBoardConstituents: fetchBoardConstituents };
+  window.__mktDebug = { renderAll: renderAll, ensureSkeleton: ensureSkeleton, approxBase: approxBase, afterClose: afterClose, loadMarket: loadMarket, fetchEvents: fetchEvents, fetchJsonp: fetchJsonp, fetchBoardConstituents: fetchBoardConstituents, quantHeat: quantHeat, quantStage: quantStage, quantSectorStrength: quantSectorStrength };
 })();
