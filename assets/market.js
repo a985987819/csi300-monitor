@@ -30,6 +30,14 @@
     { key: "zynp", secid: "0.002448", tx: "sz002448", name: "中原内配" },
     { key: "md", secid: "0.000333", tx: "sz000333", name: "美的集团" },
   ];
+
+  /* ─────────── 估值与定投档位（skill P0：PE十年分位 + ERP + 定投规则） ─────────── */
+  var VAL_INDEXES = [
+    { key: "sh000300", name: "沪深300", secid: "1.000300" },
+    { key: "sh000001", name: "上证指数", secid: "1.000001" },
+    { key: "sz399006", name: "创业板指", secid: "0.399006" },
+    { key: "sh000688", name: "科创50", secid: "1.000688" },
+  ];
   // ETF观察（skill L2：行情/份额变动/折溢价——仅观察资金借道行为，不参与板块强度评分）
   var ETFS = [
     { secid: "1.560280", code: "560280", name: "工程机械ETF", theme: "工程机械" },
@@ -270,6 +278,63 @@
   /* ─────────── 腾讯行情降级源（设计文档：主源失败时用腾讯行情补指数快照） ───────────
      qt.gtimg.cn 快照（GBK script，数字字段 ASCII 安全，已实测 [37]/1e4=成交额亿）；
      web.ifzq.gtimg.cn 日K（CORS 开放 ACAL:*，实测可用）。 */
+  /* ─────────── 估值与定投档位数据层 ─────────── */
+  var VAL_SNAP_KEY = "hs300.mkt.valsnap.v1";
+  var VAL_INDEXES = [
+    { tx: "sh000300", name: "沪深300", secid: "1.000300" },
+    { tx: "sh000001", name: "上证指数", secid: "1.000001" },
+    { tx: "sz399006", name: "创业板指", secid: "0.399006" },
+    { tx: "sh000688", name: "科创50", secid: "1.000688" },
+  ];
+  function valLoadSnaps() {
+    try { return JSON.parse(localStorage.getItem(VAL_SNAP_KEY) || "{}"); } catch (e) { return {}; }
+  }
+  function valSaveSnaps(s) {
+    try { localStorage.setItem(VAL_SNAP_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  // 腾讯快照批量获取指数PE-TTM/股息率（field [39]=PE-TTM / [49]=股息率%，已验证）
+  function fetchValQuotes() {
+    return new Promise(function (resolve) {
+      var s = document.createElement("script");
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; s.remove(); resolve({}); } }, 10000);
+      s.src = "https://qt.gtimg.cn/q=" + VAL_INDEXES.map(function (ix) { return ix.tx; }).join(",");
+      s.onload = function () {
+        if (done) return;
+        done = true; clearTimeout(to); s.remove();
+        var out = {};
+        VAL_INDEXES.forEach(function (ix) {
+          try {
+            var raw = window["v_" + ix.tx];
+            if (typeof raw !== "string") return;
+            var p = raw.split("~");
+            out[ix.tx] = { pe: num(p[39]), dy: num(p[49]) };
+          } catch (e) {}
+        });
+        resolve(out);
+      };
+      s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); resolve({}); } };
+      document.head.appendChild(s);
+    });
+  }
+  // 中国货币网 10Y 国债收益率（GET 格式，已验证返回 total>0）
+  function fetch10YYield() {
+    var url = "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-currency/ClsYldCurvHis?lang=CN&reference=1&bondType=CYCC000&termId=10&pageSize=5&pageNum=1";
+    return fetch(url, { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var data = d && d.data || {};
+        var records = data.records || [];
+        if (!records.length) return null;
+        var last = records[records.length - 1];
+        var yld = null;
+        for (var k in last) {
+          if (typeof last[k] === "number" && last[k] > 1 && last[k] < 8) { yld = last[k]; break; }
+        }
+        return yld !== null ? { yield: yld, date: data.endDateCN || "" } : null;
+      }).catch(function () { return null; });
+  }
+
   function fetchTxAmounts() {
     return new Promise(function (resolve) {
       var s = document.createElement("script");
@@ -834,6 +899,8 @@
       mktBlock("热点题材动态", "近20日 → 近5日 → 今日 的题材轮动（桑基图）",
         '<div class="mkt-sanki-wrap" id="mktSankeyWrap">' + skelCard(2) + "</div>" +
         '<div class="mkt-cards" id="mktWindowWrap" style="margin-top:14px">' + skelCard(4) + "</div>") +
+      mktBlock("估值与定投档位", "PE-TTM · 股息率 · PE百分位 · 定投规则（宽基定投核心指标）",
+        '<div id="mktValWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(4) + "</div></div>") +
       mktBlock("个股动向", "观察池资金流入与近20日对比（基准日口径）",
         '<div id="mktStocksWrap"><div class="mkt-skel mkt-skel-rows">' + skelBars(5) + "</div></div>") +
       mktBlock("ETF观察", "五大主题ETF · 份额变动与折溢价（资金借道行为）",
@@ -2259,7 +2326,114 @@
     renderWindows(data);
     renderStocks(data);
     renderEtfs(data);
+    renderValuation(data);
     renderReview(data);
+  }
+
+  /* ─────────── 估值与定投档位 ─────────── */
+  // 腾讯快照批量获取指数PE-TTM/股息率（field [39]=PE-TTM / [49]=股息率%，已实测验证）
+  function fetchValQuotes() {
+    return new Promise(function (resolve) {
+      var s = document.createElement("script");
+      var done = false;
+      var to = setTimeout(function () { if (!done) { done = true; s.remove(); resolve({}); } }, 10000);
+      s.src = "https://qt.gtimg.cn/q=" + VAL_INDEXES.map(function (ix) { return ix.tx; }).join(",");
+      s.onload = function () {
+        if (done) return;
+        done = true; clearTimeout(to); s.remove();
+        var out = {};
+        VAL_INDEXES.forEach(function (ix) {
+          try {
+            var raw = window["v_" + ix.tx];
+            if (typeof raw !== "string") return;
+            var p = raw.split("~");
+            out[ix.tx] = { pe: num(p[39]), dy: num(p[49]) };
+          } catch (e) {}
+        });
+        resolve(out);
+      };
+      s.onerror = function () { if (!done) { done = true; clearTimeout(to); s.remove(); resolve({}); } };
+      document.head.appendChild(s);
+    });
+  }
+  // 10Y国债收益率（chinamoney GET，best effort——失败不阻塞）
+  function fetch10YYield() {
+    var url = "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-currency/ClsYldCurvHis?lang=CN&reference=1&bondType=CYCC000&termId=10&pageSize=5&pageNum=1";
+    return fetch(url, { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var records = d && d.data && d.data.records || [];
+        if (!records.length) return null;
+        var last = records[records.length - 1];
+        for (var k in last) {
+          if (typeof last[k] === "number" && last[k] > 1 && last[k] < 8) return last[k];
+        }
+        return null;
+      }).catch(function () { return null; });
+  }
+  // 估值快照积累 + 百分位计算
+  function valSnapGet() {
+    try { return JSON.parse(localStorage.getItem(VAL_SNAP_KEY) || "{}"); } catch (e) { return {}; }
+  }
+  function valSnapSave(s) {
+    try { localStorage.setItem(VAL_SNAP_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  function renderValuation(data) {
+    var host = $("mktValWrap");
+    if (!host) return;
+    var quotes = data.valQuotes || {};
+    if (!Object.keys(quotes).length) {
+      // fire-and-forget：无快照缓存时从腾讯快照拉取（独立于数据源，每次进入自动执行）
+      fetchValQuotes().then(function (q) {
+        if (!Object.keys(q).length) { host.innerHTML = capNote("指数PE/PB/股息率"); return; }
+        var snaps = valSnapGet();
+        var today = bjNow().date;
+        if (!snaps[today]) snaps[today] = {};
+        VAL_INDEXES.forEach(function (ix) {
+          var v = q[ix.tx];
+          if (v && v.pe !== null && v.pe !== undefined) { snaps[today][ix.tx] = v; }
+        });
+        valSnapSave(snaps);
+        renderValuation({ valQuotes: q });
+      });
+      return;
+    }
+    var html = '<table class="mkt-table"><thead><tr>' +
+      "<th>指数</th><th>PE-TTM</th><th>股息率</th><th>PE百分位</th><th>定投档位</th></tr></thead><tbody>";
+    VAL_INDEXES.forEach(function (ix) {
+      var q = quotes[ix.tx];
+      if (!q || q.pe === null || q.pe === undefined) return;
+      var snapsArr = [];
+      Object.keys(snaps).forEach(function (d) {
+        var v = snaps[d] && snaps[d][ix.tx];
+        if (v && v.pe !== null && v.pe !== undefined) snapsArr.push(v.pe);
+      });
+      snapsArr.sort(function (a, b) { return a - b; });
+      var pctile = null;
+      if (snapsArr.length >= 20) {
+        var below = 0;
+        for (var i = 0; i < snapsArr.length; i++) { if (snapsArr[i] < q.pe) below++; }
+        pctile = below / snapsArr.length * 100;
+      }
+      var tier = "积累中";
+      var tierCls = "mkt-dim-num";
+      if (pctile !== null) {
+        if (pctile < 30) { tier = "加速"; tierCls = "mkt-num-up"; }
+        else if (pctile > 70) { tier = "减速"; tierCls = "mkt-num-down"; }
+        else { tier = "正常"; }
+      }
+      var pctileHtml = pctile !== null
+        ? '<span class="' + tierCls + '">' + pctile.toFixed(0) + "%</span>"
+        : '<span class="mkt-dim-num" title="每日进入自动积累PE快照，≥20个交易日后可计算百分位">积累中</span>';
+      html += "<tr><td class='mkt-name-cell'>" + esc(ix.name) + "</td>" +
+        "<td class='" + pctCls(q.pe) + "'>" + (q.pe !== null ? q.pe.toFixed(2) : "--") + "</td>" +
+        "<td class='" + pctCls(q.dy) + "'>" + (q.dy !== null ? q.dy.toFixed(2) + "%" : "--") + "</td>" +
+        "<td>" + pctileHtml + "</td>" +
+        "<td><span class='" + tierCls + "'>" + tier + "</span></td></tr>";
+    });
+    html += "</tbody></table>" +
+      '<div class="mkt-foot-hint">PE百分位 = 当前PE在历史快照中的百分位（自建快照积累，≥20个交易日后可用）。定投规则：PE百分位&lt;30%加速、30%-70%正常、&gt;70%减速。PB与ERP待接入。</div>';
+    host.innerHTML = html;
   }
 
   function sparkSvg(closes, w20) {
