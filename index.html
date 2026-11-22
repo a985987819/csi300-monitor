@@ -27,6 +27,7 @@ try {
     <button class="nav-pill active" data-tab="broad">宽基</button>
     <button class="nav-pill" data-tab="bond">债基</button>
     <button class="nav-pill" data-tab="market">市场</button>
+    <button class="nav-pill" data-tab="learn">学习</button>
     <button class="nav-pill" data-tab="fav">我的自选 <span class="badge" id="favBadge">0</span></button>
     <button class="nav-pill" data-tab="settings">设置</button>
   </nav>
@@ -112,6 +113,24 @@ try {
     <p class="mkt-note">开盘期间自动统计<b>上一交易日</b>收盘数据，收盘后统计<b>当日</b>；板块资金流 / 题材振幅 / 桑基热点均来自东方财富公开接口，按基准日本地缓存，当日重访秒开。</p>
   </section>
   <div class="mkt-body" id="mktBody"><!-- 市场模块由 assets/market.js 渲染 --></div>
+</main>
+
+<!-- ═══════════ 学习页 ═══════════ -->
+<main class="page" id="page-learn">
+  <section class="learn-head">
+    <div class="mkt-title-row">
+      <b class="mkt-title">指标百科</b>
+      <input id="learnSearch" type="text" autocomplete="off" spellcheck="false"
+             placeholder="搜索指标（名称 / 英文 / 拼音首字母）" class="learn-search">
+    </div>
+  </section>
+  <div class="learn-body" id="learnBody"><!-- 指标卡由 learn.js 渲染 --></div>
+  <!-- 液态玻璃底部导航 -->
+  <div class="learn-nav-float" id="learnNavFloat">
+    <button data-cat="stock" class="on">股市</button>
+    <button data-cat="fund">基金</button>
+    <button data-cat="bond">债市</button>
+  </div>
 </main>
 
 <!-- ═══════════ 设置页 ═══════════ -->
@@ -210,5 +229,6 @@ try {
 <script src="data/data.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/market.js"></script>
+<script src="assets/learn.js"></script>
 </body>
 </html>
