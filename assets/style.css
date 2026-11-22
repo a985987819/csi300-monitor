@@ -1057,7 +1057,7 @@ html.dark .mkt-gauge-num b { color: var(--text-strong); }
 
 /* ── 行头（常驻） ── */
 .learn-row {
-  display: grid; grid-template-columns: 28px 150px 170px 1fr 92px 18px;
+  display: grid; grid-template-columns: 28px 160px 168px 52px 1fr 46px 18px;
   align-items: center; gap: 10px; padding: 9px 14px 9px 10px; cursor: pointer;
   transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
   user-select: none; position: relative; z-index: 1;
@@ -1076,23 +1076,36 @@ html.dark .mkt-gauge-num b { color: var(--text-strong); }
   overflow: hidden; text-overflow: ellipsis; }
 .learn-en { font-size: 11.5px; color: var(--text-faint); font-style: italic; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
+.learn-cat { display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;
+  color: var(--text-dim); background: var(--t-head); border: 1px solid var(--t-border);
+  border-radius: 99px; padding: 1px 8px; white-space: nowrap; }
+.learn-item.open .learn-cat, .learn-row:hover .learn-cat { background: var(--panel); }
 .learn-one { font-size: 12.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; min-width: 0; }
-.learn-star { color: #d97706; font-size: 11px; letter-spacing: 1px; text-align: right; white-space: nowrap; }
+.learn-freq { display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px;
+  font-weight: 700; border-radius: 99px; padding: 2px 8px; white-space: nowrap;
+  background: rgba(13,148,136,0.1); color: var(--teal); }
+.learn-freq.hot { background: rgba(220,68,74,0.12); color: #d8434a; }
+.learn-freq.adv { background: var(--t-head); color: var(--text-faint); border: 1px solid var(--t-border); padding: 1px 7px; }
 .learn-caret { color: var(--text-faint); font-size: 11px; transition: transform 0.18s ease; text-align: center; }
 .learn-item.open .learn-caret { transform: rotate(180deg); }
 
-/* ── 展开详情 ── */
+/* ── 展开详情（两栏：左侧维度文本，右侧图示） ── */
 .learn-detail {
   overflow: hidden; transition: max-height 0.2s ease, opacity 0.18s ease;
-  padding: 4px 18px 14px 46px; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 18px 14px 46px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 6px 18px;
   background: linear-gradient(180deg, var(--t-head), transparent 140%);
   border-top: 1px dashed var(--t-border);
 }
+.learn-detail-main { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .learn-label { display: inline-block; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--teal);
   border-radius: 3px; padding: 1px 6px; margin-right: 8px; vertical-align: 1px; }
-.learn-p { font-size: 13px; line-height: 1.72; color: var(--text); }
-.learn-p b { margin-right: 6px; }
+.learn-label.use { background: #3b82f6; }
+.learn-label.lim { background: #f59e0b; }
+.learn-p, .learn-use, .learn-lim { font-size: 13px; line-height: 1.72; color: var(--text); }
+.learn-use { color: var(--text-strong); }
+.learn-lim { color: var(--text-dim); }
 .learn-hl { font-size: 12.8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .learn-hi, .learn-lo { padding: 4px 0; }
 .learn-hi i, .learn-lo i { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px;
@@ -1102,18 +1115,22 @@ html.dark .mkt-gauge-num b { color: var(--text-strong); }
 .learn-fx { font-size: 12.5px; }
 .learn-fx code { background: var(--t-head); border: 1px solid var(--t-border); border-radius: 4px; padding: 2px 8px;
   font-family: Consolas, Menlo, monospace; font-size: 11.5px; color: var(--text-strong); display: inline-block; }
-.learn-dg-wrap { display: flex; justify-content: center; padding: 6px 0 2px; }
+/* 右侧图示列：垂直居中 */
+.learn-dg-wrap { display: flex; align-items: center; justify-content: center; padding: 0 0 4px; }
 .learn-dg { width: 260px; max-width: 100%; height: auto; flex: none; }
 
-/* 行模式响应式：窄屏隐藏英文与一句话 */
-@media (max-width: 860px) {
-  .learn-row { grid-template-columns: 28px 130px 1fr 70px 18px; }
-  .learn-en { display: none; }
+/* 行模式响应式：窄屏隐藏英文/分类，图示换行到下方 */
+@media (max-width: 960px) {
+  .learn-row { grid-template-columns: 28px 140px 1fr 1fr 46px 18px; }
+  .learn-en, .learn-cat { display: none; }
+}
+@media (max-width: 760px) {
+  .learn-detail { grid-template-columns: 1fr; padding-left: 14px; }
+  .learn-dg-wrap { padding: 4px 0 6px; }
 }
 @media (max-width: 560px) {
-  .learn-row { grid-template-columns: 26px 120px 1fr 18px; }
-  .learn-star { display: none; }
-  .learn-detail { padding-left: 14px; }
+  .learn-row { grid-template-columns: 26px 120px 1fr 46px 18px; }
+  .learn-one { display: none; }
 }
 
 /* 空态 */
