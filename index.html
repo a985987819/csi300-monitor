@@ -12,7 +12,11 @@ try {
   if (_st.theme === "dark") document.documentElement.classList.add("dark");
 } catch (e) {}
 </script>
-<link rel="stylesheet" href="assets/style.css">
+<script>
+/* 样式表会话级缓存穿透：每次整页加载用新查询串，确保部署后立即生效
+   （GitHub Pages max-age=600 内浏览器会回放旧 CSS；document.write 保持渲染阻塞顺序） */
+document.write('<link rel="stylesheet" href="assets/style.css?s=' + Date.now().toString(36) + '">');
+</script>
 </head>
 <body>
 
