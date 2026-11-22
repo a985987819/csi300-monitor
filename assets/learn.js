@@ -1,9 +1,10 @@
-/* ═══════════ 指标百科 · 学习模块 ═══════════ */
+/* ═══════════ 指标百科 · 学习模块（行模式：hover高亮+阴影，点击展开详情） ═══════════ */
 (function () {
   "use strict";
 
   var activeCat = "stock";
   var searchTerm = "";
+  var openSet = {};            /* 已展开的指标名集合（按分类记忆） */
   var LEARN_DATA = window.LEARN_DATA || { stock: [], fund: [], bond: [] };
 
   function $(id) { return document.getElementById(id); }
@@ -35,11 +36,6 @@
       s += '<rect x="' + (x + bw * 0.1).toFixed(1) + '" y="' + top + '" width="' + (bw * 0.7).toFixed(1) + '" height="' + (bot - top).toFixed(1) + '" fill="' + col + '" rx="1"/>';
     });
     return dgSvg(s, DG_W, DG_H);
-  }
-  function dgLine() {
-    var pts = "5,55 30,48 55,40 80,44 105,32 130,36 155,24 180,20 195,14";
-    return dgSvg('<polyline points="' + pts + '" fill="none" stroke="#0d9488" stroke-width="2" stroke-linejoin="round"/>' +
-      '<circle cx="195" cy="14" r="3" fill="#0d9488"/>');
   }
   function dgBar() {
     var s = "";
@@ -93,18 +89,18 @@
   }
   function dgSpectrum(label) {
     return dgSvg('<defs><linearGradient id="sg_' + (label || "d") + '" x1="0" x2="1"><stop offset="0%" stop-color="#0c7a3e"/><stop offset="25%" stop-color="#57c48c"/><stop offset="50%" stop-color="#c9cfda"/><stop offset="75%" stop-color="#ec7d7d"/><stop offset="100%" stop-color="#a51c1c"/></linearGradient></defs>' +
-      '<rect x="0" y="' + DG_H / 2 - 7 + '" width="' + DG_W + '" height="14" rx="7" fill="url(#sg_' + (label || "d") + ')"/>' +
+      '<rect x="0" y="' + (DG_H / 2 - 7) + '" width="' + DG_W + '" height="14" rx="7" fill="url(#sg_' + (label || "d") + ')"/>' +
       '<polygon points="' + DG_W / 2 + ',' + (DG_H / 2 - 12) + ' ' + (DG_W / 2 - 6) + ',' + (DG_H / 2 - 2) + ' ' + (DG_W / 2 + 6) + ',' + (DG_H / 2 - 2) + '" fill="#26314a"/>');
   }
-  function dgSplit(a, b) {
-    return dgSvg('<line x1="' + DG_W / 2 + '" y1="5" x2="' + DG_W / 2 + '" y2="' + DG_H - 5 + '" stroke="var(--t-border)" stroke-dasharray="4 3"/>' +
-      '<text x="' + DG_W / 4 + '" y="14" text-anchor="middle" font-size="11" fill="#e05a5a" font-weight="600">' + (a || "高") + '</text>' +
-      '<text x="' + DG_W * 3 / 4 + '" y="14" text-anchor="middle" font-size="11" fill="#1fa363" font-weight="600">' + (b || "低") + '</text>' +
-      '<text x="' + DG_W / 4 + '" y="' + DG_H / 2 + '" text-anchor="middle" font-size="10" fill="var(--text-dim)">' + (a || "") + '</text>' +
-      '<text x="' + DG_W * 3 / 4 + '" y="' + DG_H / 2 + '" text-anchor="middle" font-size="10" fill="var(--text-dim)">' + (b || "") + '</text>');
+  function dgSplitH(left, right) {
+    return dgSvg('<line x1="' + DG_W / 2 + '" y1="5" x2="' + DG_W / 2 + '" y2="' + (DG_H - 5) + '" stroke="var(--t-border)" stroke-dasharray="4 3"/>' +
+      '<text x="8" y="20" font-size="11" fill="#e05a5a" font-weight="600">' + (left || "正") + '</text>' +
+      '<text x="' + (DG_W - 8) + '" y="20" text-anchor="end" font-size="11" fill="#1fa363" font-weight="600">' + (right || "负") + '</text>' +
+      '<rect x="8" y="' + (DG_H / 2 - 5) + '" width="' + (DG_W / 2 - 16) + '" height="10" rx="3" fill="#e05a5a" opacity="0.2"/>' +
+      '<rect x="' + (DG_W / 2 + 8) + '" y="' + (DG_H / 2 - 5) + '" width="' + (DG_W / 2 - 16) + '" height="10" rx="3" fill="#1fa363" opacity="0.2"/>');
   }
   function dgCurve() {
-    return dgSvg('<path d="M0,' + DG_H - 5 + ' C60,' + DG_H - 8 + ' 100,30 140,25 180,22 ' + DG_W + ',15 ' + DG_W + ',12" fill="none" stroke="#0d9488" stroke-width="2"/>' +
+    return dgSvg('<path d="M0,' + (DG_H - 5) + ' C60,' + (DG_H - 8) + ' 100,30 140,25 180,22 ' + DG_W + ',15 ' + DG_W + ',12" fill="none" stroke="#0d9488" stroke-width="2"/>' +
       '<circle cx="60" cy="' + (DG_H - 6) + '" r="3" fill="#0d9488"/><circle cx="140" cy="25" r="3" fill="#0d9488"/>' +
       '<text x="60" y="' + (DG_H - 10) + '" font-size="9" fill="var(--text-dim)" text-anchor="middle">短期</text>' +
       '<text x="140" y="38" font-size="9" fill="var(--text-dim)" text-anchor="middle">中期</text>' +
@@ -114,8 +110,8 @@
     return dgSvg('<defs><marker id="af" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto"><path d="M0 0 L5 2 L0 4" fill="#e05a5a"/></marker></defs>' +
       '<line x1="20" y1="20" x2="' + (DG_W - 30) + '" y2="20" stroke="#e05a5a" stroke-width="2" marker-end="url(#af)"/>' +
       '<text x="' + DG_W / 2 + '" y="14" text-anchor="middle" font-size="10" fill="var(--text-dim)">资金流入 →</text>' +
-      '<line x1="' + (DG_W - 30) + '" y1="' + DG_H - 20 + '" x2="30" y2="' + DG_H - 20 + '" stroke="#1fa363" stroke-width="2" marker-end="url(#af)"/>' +
-      '<text x="' + DG_W / 2 + '" y="' + DG_H - 10 + '" text-anchor="middle" font-size="10" fill="var(--text-dim)">← 资金流出</text>');
+      '<line x1="' + (DG_W - 30) + '" y1="' + (DG_H - 20) + '" x2="30" y2="' + (DG_H - 20) + '" stroke="#1fa363" stroke-width="2" marker-end="url(#af)"/>' +
+      '<text x="' + DG_W / 2 + '" y="' + (DG_H - 10) + '" text-anchor="middle" font-size="10" fill="var(--text-dim)">← 资金流出</text>');
   }
   function dgMaCross() {
     return dgSvg('<path d="M0,55 C40,50 60,45 90,42 C120,38 150,42 200,38" fill="none" stroke="#8a96b0" stroke-width="1.5" stroke-dasharray="4 2"/>' +
@@ -135,8 +131,8 @@
   }
   function dgDurationBar(len) {
     var w = Math.max(20, Math.min(DG_W - 20, (len || 5) / 10 * DG_W));
-    return dgSvg('<rect x="0" y="' + DG_H / 2 - 8 + '" width="' + w.toFixed(0) + '" height="16" rx="4" fill="#0d9488" opacity="0.3"/>' +
-      '<rect x="0" y="' + DG_H / 2 - 8 + '" width="' + (w * 0.3).toFixed(0) + '" height="16" rx="4" fill="#0d9488"/>' +
+    return dgSvg('<rect x="0" y="' + (DG_H / 2 - 8) + '" width="' + w.toFixed(0) + '" height="16" rx="4" fill="#0d9488" opacity="0.3"/>' +
+      '<rect x="0" y="' + (DG_H / 2 - 8) + '" width="' + (w * 0.3).toFixed(0) + '" height="16" rx="4" fill="#0d9488"/>' +
       '<text x="' + (w + 8).toFixed(0) + '" y="' + (DG_H / 2 + 5) + '" font-size="11" fill="var(--text-dim)">' + (len || 5) + '年</text>');
   }
   function dgRatingLadder() {
@@ -144,7 +140,7 @@
     var s = "";
     ratings.forEach(function (r, i) {
       var y = 8 + i * 9;
-      s += '<rect x="' + DG_W / 2 - 30 + '" y="' + y + '" width="60" height="7" rx="2" fill="' + r[1] + '"/>' +
+      s += '<rect x="' + (DG_W / 2 - 30) + '" y="' + y + '" width="60" height="7" rx="2" fill="' + r[1] + '"/>' +
         '<text x="' + (DG_W / 2 + 36) + '" y="' + (y + 6) + '" font-size="9" fill="var(--text-dim)">' + r[0] + '</text>';
     });
     return dgSvg(s, DG_W, 72);
@@ -152,21 +148,14 @@
   function dgTermStructure() {
     return dgSvg('<path d="M0,60 C40,55 80,48 120,42 C160,38 180,32 200,28" fill="none" stroke="#0d9488" stroke-width="2"/>' +
       '<line x1="0" y1="50" x2="200" y2="50" stroke="#c9cfda" stroke-dasharray="3 3"/>' +
-      '<text x="20" y="' + DG_H - 8 + '" font-size="9" fill="var(--text-dim)">短期</text>' +
+      '<text x="20" y="' + (DG_H - 8) + '" font-size="9" fill="var(--text-dim)">短期</text>' +
       '<text x="180" y="20" font-size="9" fill="var(--text-dim)">长期</text>' +
       '<text x="100" y="18" font-size="10" fill="#0d9488" text-anchor="middle">收益率曲线</text>');
   }
-  function dgSplitH(left, right) {
-    return dgSvg('<line x1="' + DG_W / 2 + '" y1="5" x2="' + DG_W / 2 + '" y2="' + DG_H - 5 + '" stroke="var(--t-border)" stroke-dasharray="4 3"/>' +
-      '<text x="8" y="20" font-size="11" fill="#e05a5a" font-weight="600">' + (left || "正") + '</text>' +
-      '<text x="' + (DG_W - 8) + '" y="20" text-anchor="end" font-size="11" fill="#1fa363" font-weight="600">' + (right || "负") + '</text>' +
-      '<rect x="8" y="' + DG_H / 2 - 5 + '" width="' + (DG_W / 2 - 16) + '" height="10" rx="3" fill="#e05a5a" opacity="0.2"/>' +
-      '<rect x="' + (DG_W / 2 + 8) + '" y="' + DG_H / 2 - 5 + '" width="' + (DG_W / 2 - 16) + '" height="10" rx="3" fill="#1fa363" opacity="0.2"/>');
-  }
 
   var DG_MAP = {
-    kline: dgKline, line: dgLine, bar: dgBar, oscillator: dgOscillator, band: dgBand,
-    gauge: dgGauge, spectrum: function () { return dgSpectrum("d"); }, split: function () { return dgSplitH(); },
+    kline: dgKline, bar: dgBar, oscillator: dgOscillator, band: dgBand,
+    gauge: dgGauge, spectrum: function () { return dgSpectrum("d"); },
     curve: dgCurve, flow: dgFlow, ma_cross: dgMaCross, nav_curve: dgNavCurve,
     duration_bar: function () { return dgDurationBar(5); },
     rating_ladder: dgRatingLadder, term_structure: dgTermStructure, split_h: dgSplitH,
@@ -176,19 +165,21 @@
     return fn ? fn() : "";
   }
 
-  /* ── 搜索 ── */
+  /* ── 搜索：名称 / 英文 / 标签 / 拼音首字母 ── */
   function fuzzyMatch(query, item) {
     if (!query) return true;
-    var q = query.toLowerCase();
+    var q = query.toLowerCase().replace(/\s+/g, "");
     if (item.n.toLowerCase().indexOf(q) >= 0) return true;
     if (item.en.toLowerCase().indexOf(q) >= 0) return true;
     if (item.tags && item.tags.toLowerCase().indexOf(q) >= 0) return true;
-    // 拼音首字母
     if (item.py && item.py.indexOf(q) >= 0) return true;
+    /* 多关键词：全部命中才算匹配 */
+    var parts = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (parts.length > 1) return parts.every(function (p) { return fuzzyMatch(p, item); });
     return false;
   }
 
-  /* ── 渲染 ── */
+  /* ── 行模式渲染 ── */
   function render() {
     var host = $("learnBody");
     if (!host) return;
@@ -200,37 +191,99 @@
       host.innerHTML = '<div class="learn-empty">未找到匹配指标（搜索：' + esc(searchTerm) + '）</div>';
       return;
     }
-    var html = "";
+    var openKey = activeCat, opened = openSet[openKey] || {};
+    var html = '<div class="learn-rows">';
     filtered.forEach(function (item, idx) {
-      html += '<div class="learn-card">';
-      html += '<div class="learn-card-head">';
-      html += '<span class="learn-rank">' + (idx + 1) + '</span>';
-      html += '<span class="learn-name">' + esc(item.n) + '</span>';
-      html += '<span class="learn-en">' + esc(item.en) + '</span>';
-      html += '<span class="learn-star">' + starRating((25 - Math.min(25, item.f * 5)) / 25 * 100) + '</span>';
+      var isOpen = !!opened[item.n];
+      html += '<div class="learn-item' + (isOpen ? " open" : "") + '" data-n="' + esc(item.n) + '">';
+      /* ── 行头：常驻可见 ── */
+      html += '<div class="learn-row" role="button" tabindex="0" aria-expanded="' + isOpen + '">';
+      html += '<span class="learn-rank">' + (idx + 1) + "</span>";
+      html += '<span class="learn-name">' + esc(item.n) + "</span>";
+      html += '<span class="learn-en">' + esc(item.en) + "</span>";
+      html += '<span class="learn-one">' + esc(item.one || "") + "</span>";
+      html += '<span class="learn-star" title="使用频率">' + starRating((25 - Math.min(25, item.f * 5)) / 25 * 100) + "</span>";
+      html += '<span class="learn-caret">▾</span>';
       html += "</div>";
-      html += '<div class="learn-card-body">';
-      html += '<div class="learn-p"><b class="learn-label">第一性原理</b>' + esc(item.p) + "</div>";
-      if (item.hi || item.lo) {
-        html += '<div class="learn-hl"><span class="learn-label">高低含义</span>' +
-          '<span class="learn-hi">' + esc(item.hi || "--") + '</span>' +
-          '<span class="learn-lo">' + esc(item.lo || "--") + "</span></div>";
+      /* ── 展开详情 ── */
+      if (isOpen) {
+        html += detailHtml(item);
       }
-      if (item.fx) {
-        html += '<div class="learn-fx"><span class="learn-label">计算</span><code>' + esc(item.fx) + "</code></div>";
-      }
-      var dgHtml = dgFor(item.dg);
-      if (dgHtml) {
-        html += '<div class="learn-dg-wrap">' + dgHtml + "</div>";
-      }
-      html += "</div></div>";
+      html += "</div>";
     });
+    html += "</div>";
     host.innerHTML = html;
+  }
+  function detailHtml(item) {
+    var h = '<div class="learn-detail">';
+    h += '<div class="learn-p"><b class="learn-label">第一性原理</b>' + esc(item.p) + "</div>";
+    if (item.hi || item.lo) {
+      h += '<div class="learn-hl"><span class="learn-label">高低含义</span>' +
+        '<span class="learn-hi"><i>高</i>' + esc(item.hi || "--") + "</span>" +
+        '<span class="learn-lo"><i>低</i>' + esc(item.lo || "--") + "</span></div>";
+    }
+    if (item.fx) {
+      h += '<div class="learn-fx"><span class="learn-label">计算</span><code>' + esc(item.fx) + "</code></div>";
+    }
+    var dgHtml = dgFor(item.dg);
+    if (dgHtml) {
+      h += '<div class="learn-dg-wrap">' + dgHtml + "</div>";
+    }
+    h += "</div>";
+    return h;
   }
   function starRating(score) {
     var s = Math.max(0, Math.min(100, score));
     var full = Math.floor(s / 20), half = (s % 20) >= 10, dots = 5 - full - (half ? 1 : 0);
     return "★".repeat(full) + (half ? "☆" : "") + "·".repeat(dots);
+  }
+
+  /* ── 展开/收起（事件委托，动画平滑） ── */
+  function bindRows() {
+    var host = $("learnBody");
+    if (!host || host._learnBound) return;
+    host._learnBound = true;
+    host.addEventListener("click", function (ev) {
+      var row = ev.target.closest(".learn-row");
+      if (!row) return;
+      var wrap = row.parentElement;
+      var name = wrap.getAttribute("data-n");
+      var isOpen = wrap.classList.contains("open");
+      if (isOpen) {
+        /* 收起：先压缩高度再移除，动画自然 */
+        var det = wrap.querySelector(".learn-detail");
+        if (det) {
+          det.style.maxHeight = det.scrollHeight + "px";
+          requestAnimationFrame(function () {
+            det.style.maxHeight = "0";
+            det.style.opacity = "0";
+            setTimeout(function () { render(); }, 160);
+          });
+        } else { render(); }
+        delete openSet[activeCat][name];
+      } else {
+        if (!openSet[activeCat]) openSet[activeCat] = {};
+        openSet[activeCat][name] = true;
+        render();
+        /* 展开：从 0 → 自动高度过渡 */
+        var el = host.querySelector('.learn-item[data-n="' + name.replace(/"/g, "") + '"] .learn-detail');
+        if (el) {
+          var target = el.scrollHeight;
+          el.style.maxHeight = "0";
+          el.style.opacity = "0";
+          requestAnimationFrame(function () {
+            el.style.maxHeight = target + "px";
+            el.style.opacity = "1";
+            setTimeout(function () { el.style.maxHeight = "none"; }, 220);
+          });
+        }
+      }
+    });
+    host.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      var row = ev.target.closest(".learn-row");
+      if (row) { ev.preventDefault(); row.click(); }
+    });
   }
 
   /* ── 初始化 ── */
@@ -243,9 +296,12 @@
     });
     var searchEl = $("learnSearch");
     if (searchEl) {
+      var tId = null;
       searchEl.addEventListener("input", function () {
-        searchTerm = this.value.trim();
-        render();
+        /* 150ms 防抖，避免大列表连续重渲染 */
+        clearTimeout(tId);
+        var v = this.value.trim();
+        tId = setTimeout(function () { searchTerm = v; render(); }, 150);
       });
     }
     var navFloat = $("learnNavFloat");
@@ -264,10 +320,10 @@
         x.classList.toggle("on", x.getAttribute("data-cat") === activeCat);
       });
     }
-    // 反映持久化选择
     function ensureLearn() {
       if (!$("learnBody") || !$("learnBody").innerHTML.trim()) render();
     }
+    bindRows();
     render();
   });
 })();
