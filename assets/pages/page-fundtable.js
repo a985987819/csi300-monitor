@@ -18,8 +18,6 @@
         '<span class="meta-filtered" id="filteredNote"></span>' +
       '</div>' +
       '<div class="export-group">' +
-        '<button class="btn btn-ghost" id="btnPause" hidden>⏸ 暂停获取</button>' +
-        '<button class="btn btn-ghost" id="btnRefresh" title="重新从公开接口拉取最新数据">⟳ 刷新数据</button>' +
         '<button class="btn btn-green" id="btnExportPage">⟋ 导出当前页</button>' +
         '<button class="btn btn-white" id="btnExportExcel">⭳ 导出 Excel</button>' +
       '</div>' +

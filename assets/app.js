@@ -469,8 +469,7 @@
       gateWaiters.length = 0;
       w.forEach(function (f) { f(); });
     }
-    var b = $("btnPause");
-    if (b) b.textContent = p ? "▶ 继续获取" : "⏸ 暂停获取";
+    pauseBtnText(p ? "▶ 继续获取" : "⏸ 暂停获取");
     setModeChip();
     if (p && !$("loadOverlay").hidden) {
       $("loadStage").textContent = "已挂起——完成前端调整后点「▶ 继续获取」恢复排队";
@@ -537,8 +536,9 @@
       });
     };
   }
-  // 节奏限速器：两次请求起始间隔至少 minGap 毫秒，避免触发东财突发限流
-  function makePacer(minGap) {
+  // 节奏限速器：两次请求起始间隔至少 gap 毫秒（可为函数，运行时可调），避免触发东财突发限流
+  function makePacer(gapOrFn) {
+    function gap() { return typeof gapOrFn === "function" ? gapOrFn() : gapOrFn; }
     var lastStart = 0;
     var queue = [];
     var pumping = false;
@@ -548,7 +548,7 @@
       (function step() {
         if (!queue.length) { pumping = false; return; }
         var job = queue.shift();
-        var wait = Math.max(0, lastStart + minGap - Date.now());
+        var wait = Math.max(0, lastStart + gap() - Date.now());
         setTimeout(function () {
           lastStart = Date.now();
           job().then(function (v) { job.__resolve(v); step(); },
@@ -563,7 +563,9 @@
       });
     };
   }
-  var paceRelay = makePacer(140);
+  /* 获取节奏：默认 140ms，可在设置页调整（写入 LS 后经 applySettingsState 生效） */
+  var paceMs = 140;
+  var paceRelay = makePacer(function () { return paceMs; });
   var semPz = makeSemaphore(3);
 
   /* ══════════ 5. 解析器（与采集脚本同口径的 JS 实现） ══════════ */
@@ -2377,7 +2379,9 @@
     if (!st || typeof st !== "object") st = {};
     if (st.useCache === undefined) st.useCache = true;
     if (st.good === undefined) st.good = true;
+    if (st.paceMs === undefined) st.paceMs = 140;
     goodOn = !!st.good;
+    paceMs = Math.max(80, Math.min(1500, st.paceMs | 0));
     document.body.classList.toggle("dense", !!st.dense);
     document.body.classList.toggle("colorize", !!st.colorize);
   }
@@ -2445,7 +2449,7 @@
     funds = td.funds;
     liveUpdated = td.updated;
     liveFailed = td.failed;
-    $("btnPause").hidden = true;
+    pauseBtnHidden(true);
     setBtnLoading(false);
     $("countTotal").textContent = funds.length || "-";
     $("metaTitle").textContent = activeGroup.navLabel + " - " + activeTab.meta;
@@ -2531,7 +2535,7 @@
     abortLoad = false;
     dataMode = "loading";
     loadingTabKey = key;
-    $("btnPause").hidden = false;
+    pauseBtnHidden(false);
     setPaused(false);
     setModeChip();
     renderIdxTabs();
@@ -2562,7 +2566,7 @@
       favDirty = false;
     }).catch(function (e) {
       window.__lastLoadErr = (e && (e.stack || e.message)) || String(e);
-      if (e && (e.message === "aborted" || abortLoad)) { progressCb = null; $("btnPause").hidden = true; overlay.hidden = true; return; }
+      if (e && (e.message === "aborted" || abortLoad)) { progressCb = null; pauseBtnHidden(true); overlay.hidden = true; return; }
       if (useStatic()) {
         applyView();
         progressCb = null;
@@ -2573,7 +2577,7 @@
       $("loadFill").style.width = "100%";
       $("loadFill").style.background = "#B85C5C";
       progressCb = null;
-      $("btnPause").hidden = true;
+      pauseBtnHidden(true);
       loadingTabKey = null;
       setBtnLoading(false);
       renderIdxTabs();
@@ -2583,9 +2587,12 @@
   }
   function setBtnLoading(on) {
     var b = $("btnRefresh");
+    if (!b) return;   /* 更新按钮已移至设置页，元素可能不存在 */
     b.classList.toggle("loading", !!on);
     b.disabled = !!on;
   }
+  function pauseBtnHidden(h) { var b = $("btnPause"); if (b) b.hidden = h; }
+  function pauseBtnText(t) { var b = $("btnPause"); if (b) b.textContent = t; }
   function useStaticPossible() {
     return activeTab.key === "hs300" &&
       !!(window.__FUND_DATA__ && window.__FUND_DATA__.funds && window.__FUND_DATA__.funds.length);
@@ -2634,11 +2641,7 @@
     });
     $("btnExportPage").addEventListener("click", exportCSV);
     $("btnExportExcel").addEventListener("click", exportExcel);
-    $("btnRefresh").addEventListener("click", function () { switchTab(activeTab.key, true); });
-    $("btnPause").addEventListener("click", function () {
-      if (dataMode !== "loading") return;
-      setPaused(!fetchPaused);
-    });
+
     tbody.addEventListener("click", function (ev) {
       var sp = ev.target.closest(".spark");
       if (sp) { openChart(sp.getAttribute("data-code")); return; }
@@ -2732,7 +2735,7 @@
     $("loadSkip").addEventListener("click", function () {
       abortLoad = true;
       loadGen++;  // 使进行中的加载全部作废
-      $("btnPause").hidden = true;
+      pauseBtnHidden(true);
       if (tabData[activeTab.key] && tabData[activeTab.key].funds.length) { applyView(); $("loadOverlay").hidden = true; return; }
       if (useStatic()) { applyView(); $("loadOverlay").hidden = true; return; }
       $("loadStage").textContent = "暂无可用数据，请启动 server.py 后刷新页面";
@@ -2832,6 +2835,16 @@
      首次激活才 boot（按路由分组初始化）；后续激活只做分组切换（已挂载页面保留状态）。 */
   var engineBooted = false;
   window.FundEngine = {
+    /* ── 管理操作（设置页调用） ── */
+    setPaceMs: function (ms) { paceMs = Math.max(80, Math.min(1500, ms | 0)); return paceMs; },
+    getPaceMs: function () { return paceMs; },
+    refreshForce: function () { if (!engineBooted) return false; switchTab(activeTab.key, true); return true; },
+    setPaused: function (p) { if (!engineBooted) return false; if (dataMode !== "loading") return false; setPaused(!!p); return true; },
+    isPaused: function () { return fetchPaused; },
+    isLoading: function () { return dataMode === "loading"; },
+    dataMode: function () { return dataMode; },
+    activeLabel: function () { return activeTab.label; },
+    clearCacheAll: function () { cacheClearAll(); applyView(); return true; },
     activateRoute: function (groupKey) {
       $("pageFoot").hidden = groupKey !== "broad";
       if (!engineBooted) {

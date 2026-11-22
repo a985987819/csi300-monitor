@@ -1308,3 +1308,14 @@ html.dark .learn-rows { background: var(--panel); border-color: var(--panel-bord
 /* 表格内涨跌 */
 .co-table-wrap td.up { color: var(--up); }
 .co-table-wrap td.down { color: var(--down); }
+
+/* ═══════════ 设置页 · 数据获取管理 ═══════════ */
+.settings-group { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--t-border); }
+.settings-group h3 { font-size: 14px; font-weight: 600; color: var(--text-strong); margin: 0 0 10px; }
+.setting-row-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.setting-row-inline label { margin: 0; }
+.setting-row-inline select { height: 28px; border: 1px solid var(--border-dark); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); font-size: 12.5px; font-family: inherit; padding: 0 8px; outline: none; }
+.setting-row-inline select:focus { border-color: var(--accent); }
+.settings-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 8px; }
+.settings-btns .btn { height: 28px; padding: 0 12px; font-size: 12.5px; }
