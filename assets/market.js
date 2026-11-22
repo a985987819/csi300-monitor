@@ -1691,6 +1691,7 @@
       if (b.ytd !== null) list.push(b);
     });
     list.sort(function (a, b) { return b.ytd - a.ytd; });
+    if (!list.length) { host.innerHTML = capNote("板块年初至今涨跌（当前数据源不提供该口径）"); return; }
     var ytdMax = 1;
     list.forEach(function (b) { ytdMax = Math.max(ytdMax, Math.abs(b.ytd || 0)); });
     var up = list.slice(0, 10), down = list.slice(-10).reverse();
