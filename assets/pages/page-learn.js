@@ -162,6 +162,28 @@
       txt(DG_W / 2 - 42, 8 + 3.5 * 9 + 3, "投资级↑", DIM, 8, "end"), DG_W, 72);
   }
   /* ── 收益率曲线 ── */
+  /* ── 数值区间刻度图（高低含义类指标：刻度/分区标签/典型值指针） ── */
+  function dgScale(sc) {
+    var min = sc.min, max = sc.max, y = 24, bh = 10, H = 58;
+    function vx(v) { return 10 + (v - min) / (max - min) * (DG_W - 20); }
+    var s = '<rect x="10" y="' + y + '" width="' + (DG_W - 20) + '" height="' + bh + '" rx="3" fill="var(--t-head)" stroke="var(--t-border)"/>';
+    var bounds = [min].concat(sc.ticks || [], [max]);
+    var i, x;
+    (sc.ticks || []).forEach(function (t) {
+      x = vx(t);
+      s += '<line x1="' + x.toFixed(1) + '" y1="' + (y - 4) + '" x2="' + x.toFixed(1) + '" y2="' + (y + bh + 4) + '" stroke="var(--text-faint)" stroke-width="1"/>' +
+        txt(x, y - 7, t + (sc.unit || ""), "var(--text-dim)", 8.5, "middle");
+    });
+    for (i = 0; i < bounds.length - 1; i++) {
+      x = (vx(bounds[i]) + vx(bounds[i + 1])) / 2;
+      s += txt(x, y + bh + 16, (sc.labels && sc.labels[i]) || "", "var(--text-dim)", 8.5, "middle");
+    }
+    if (sc.pos !== undefined && sc.pos !== null) {
+      x = vx(sc.pos);
+      s += '<polygon points="' + x.toFixed(1) + ',' + (y + bh) + ' ' + (x - 5).toFixed(1) + ',' + (y + bh + 7) + ' ' + (x + 5).toFixed(1) + ',' + (y + bh + 7) + '" fill="var(--accent)"/>';
+    }
+    return dgSvg(s, DG_W, H);
+  }
   function dgTermStructure() {
     return dgSvg('<path d="M0,60 C40,55 80,48 120,42 C160,38 180,32 200,28" fill="none" stroke="' + TEAL + '" stroke-width="2"/>' +
       '<line x1="0" y1="50" x2="200" y2="50" stroke="#c9cfda" stroke-dasharray="3 3"/>' +
@@ -378,6 +400,7 @@
     spread_band: dgSpreadBand, pie_ring: dgPieRing, timeline_pay: dgTimelinePay,
     price_gap: dgPriceGap, repo_leverage: dgRepoLeverage, formula_card: dgFormulaCard,
     dca_dots: dgDcaDots,
+    scale: null,   /* scale 携带 sc 数据，detailHtml 中走 dgScale 分支 */
   };
   function dgFor(type) {
     var fn = DG_MAP[type];
@@ -452,7 +475,7 @@
       h += '<div class="learn-fx"><span class="learn-label">计算</span><code>' + esc(item.fx) + "</code></div>";
     }
     h += "</div>";
-    var dgHtml = dgFor(item.dg);
+    var dgHtml = (item.dg === "scale" && item.sc) ? dgScale(item.sc) : dgFor(item.dg);
     if (dgHtml) {
       h += '<div class="learn-dg-wrap">' + dgHtml + "</div>";
     }
