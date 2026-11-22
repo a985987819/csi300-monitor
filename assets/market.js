@@ -560,11 +560,28 @@
   }
 
   /* ─────────── 新浪财经数据源（板块清单 GBK 经中继解码 / 成分股 CORS 直连 / 日K var包装script） ─────────── */
+  // Pages部署态无中继：新浪板块清单用内嵌配置降级（代码+名称，行情数据由 getHQNodeData 成分股补齐）
+  var SINA_BOARDS_EMBED = [
+    ["new_blhy","玻璃行业"],["new_cbzz","船舶制造"],["new_cmyl","传媒娱乐"],["new_dlhy","电力行业"],
+    ["new_dqhy","电器行业"],["new_dzqj","电子器件"],["new_dzxx","电子信息"],["new_fdc","房地产"],
+    ["new_fdsb","发电设备"],["new_fjzz","飞机制造"],["new_fzhy","纺织行业"],["new_gdjc","钢铁行业"],
+    ["new_gfdq","家电行业"],["new_glhz","公路桥梁"],["new_hbhy","环保行业"],["new_hghy","化工行业"],
+    ["new_hlgt","航空航天"],["new_hyjc","医疗器械"],["new_jdsh","酒店旅游"],["new_jzzz","建筑建材"],
+    ["new_jjxj","酒类饮料"],["new_jtys","交通运输"],["new_lsgy","供水供气"],["new_mtcj","煤炭开采"],
+    ["new_nyl","农林牧渔"],["new_qt","其他行业"],["new_qtxj","汽车制造"],["new_shqj","商业百货"],
+    ["new_shyb","石油行业"],["new_snsb","水泥行业"],["new_swzc","生物制药"],["new_txyy","通信行业"],
+    ["new_txjx","通用机械"],["new_wlyl","网络游戏"],["new_wzgy","物资外贸"],["new_xhzs","化纤行业"],
+    ["new_xny","新能源"],["new_xxjp","食品行业"],["new_yqyb","仪器仪表"],["new_ysjs","有色金属"],
+    ["new_zhhy","综合行业"],["new_zzhy","造纸行业"],["new_zzjg","专用设备"],["new_zzhz","装修装饰"],
+    ["new_dq","电器行业"],["new_jsjx","机械制造"],["new_jzyx","建筑建材"],["new_jxjx","机械行业"],
+  ];
   function fetchSinaBoards() {
     var target = encodeURIComponent("https://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php");
-    return fetch("/api/east?u=" + target).then(function (r) { return r.arrayBuffer(); })
+    return fetch("/api/east?u=" + target)
+      .then(function (r) { return r.arrayBuffer(); })
       .then(function (buf) {
         var text = new TextDecoder("gbk").decode(buf);
+        if (text.indexOf("S_Finance_bankuai") < 0) throw new Error("no-data");
         var m = text.match(/=\s*(\{[\s\S]*\})/);
         if (!m) throw new Error("sina format");
         var obj = JSON.parse(m[1]);
@@ -576,7 +593,26 @@
                      leader: p[12] || "--", leaderPct: num(p[9]) });
         });
         return out;
+      })
+      .catch(function () {
+        // Pages部署态无中继 → 内嵌配置降级（板块涨跌幅由成分股补齐）
+        return SINA_BOARDS_EMBED.map(function (r) {
+          return { code: r[0], name: r[1], f3: null, amt: null, leader: "--", leaderPct: null };
+        });
       });
+  }
+  function parseSinaBoardsText(text) {
+    var m = text.match(/=\s*(\{[\s\S]*\})/);
+    if (!m) throw new Error("sina format");
+    var obj = JSON.parse(m[1]);
+    var out = [];
+    Object.keys(obj).forEach(function (k) {
+      var p = String(obj[k]).split(",");
+      if (p.length < 13) return;
+      out.push({ code: p[0], name: p[1], f3: num(p[5]), amt: num(p[6]),
+                 leader: p[12] || "--", leaderPct: num(p[9]) });
+    });
+    return out;
   }
   function fetchSinaConstituents(node) {
     // 流通市值 nmc 单位为万元 → 统一转元
